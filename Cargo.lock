@@ -2851,7 +2851,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "yams-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -2872,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "yams-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustix",
  "sha2",
@@ -2883,7 +2883,7 @@ dependencies = [
 
 [[package]]
 name = "yams-embed"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastembed",
  "hf-hub",
@@ -2896,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "yams-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustix",
  "tempfile",
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "yams-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nix",
  "rustix",
@@ -2916,7 +2916,7 @@ dependencies = [
 
 [[package]]
 name = "yams-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rustix",
  "thiserror",
@@ -2925,7 +2925,7 @@ dependencies = [
 
 [[package]]
 name = "yams-service"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "rustix",
@@ -2942,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "yams-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rusqlite",
  "rustix",
@@ -2956,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "yams-wiki"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "chrono",
