@@ -381,7 +381,7 @@ mod tests {
             mode,
             date: "2026-08-12".to_owned(),
             agents_md: AGENT_POLICY.to_owned(),
-            project_page: ProjectPageRequest {
+            project_page: Some(ProjectPageRequest {
                 title: "Project context".to_owned(),
                 page_type: PageType::ProjectState,
                 fact: "The project uses approved initialization manifests.".to_owned(),
@@ -389,7 +389,7 @@ mod tests {
                 how_to_apply: "Inspect, plan, approve, and apply.".to_owned(),
                 falsified_by: "An unapproved mutation succeeds.".to_owned(),
                 summary: "Memory initialization is manifest-driven.".to_owned(),
-            },
+            }),
         }
     }
 
@@ -955,7 +955,7 @@ mod tests {
         let beta = root.path().join(".agents/memory/pages/retained-beta.md");
         let before = [fs::read(&alpha).unwrap(), fs::read(&beta).unwrap()];
         let mut changed = request(root.path(), InitMode::Full);
-        changed.project_page.fact = "The project context was deliberately updated.".to_owned();
+        changed.project_page.as_mut().unwrap().fact = "The project context was deliberately updated.".to_owned();
         let envelope = plan_repository(&changed).unwrap();
         let result = apply_manifest(&envelope);
         assert!(result.ok, "{result:?}");

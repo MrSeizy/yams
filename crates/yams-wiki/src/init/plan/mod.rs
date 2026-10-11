@@ -72,6 +72,8 @@ fn resolve_agents_md(
             let policy = inspect_policy(text);
             if policy.heading_count == 1 && policy.exact {
                 Ok(text.to_owned())
+            } else if let Some(upgraded) = super::policy::upgrade_legacy_policy(text) {
+                Ok(upgraded)
             } else {
                 Err(InitError::InvalidRequest(
                     "omit agents_md only when AGENTS.md is missing or already contains the canonical Project memory section; otherwise supply the exact desired AGENTS.md"
@@ -90,7 +92,7 @@ pub fn plan_request_from_inspection(
     inspection: &super::InitInspection,
     mode: Option<InitMode>,
     date: String,
-    project_page: super::ProjectPageRequest,
+    project_page: impl Into<Option<super::ProjectPageRequest>>,
     agents_md: String,
 ) -> Result<InitPlanRequest, InitError> {
     let mode = match mode {
@@ -105,7 +107,7 @@ pub fn plan_request_from_inspection(
         mode,
         date,
         agents_md,
-        project_page,
+        project_page: project_page.into(),
     })
 }
 
@@ -158,7 +160,10 @@ pub fn plan_repository(request: &InitPlanRequest) -> Result<ManifestEnvelope, In
         ));
     }
 
-    let project_page = render_project_page(&request)?;
+    let project_page = match &request.project_page {
+        Some(page) => render_project_page(page, &request.date)?,
+        None => retained_project_page(inspection, &snapshot.contents)?,
+    };
     let mut desired = desired_candidate(&request, &snapshot.contents, inspection, project_page);
     if request.mode == InitMode::Full {
         canonicalize_full_index(&mut desired)?;
@@ -799,8 +804,29 @@ fn candidate_prefix(root: &Path) -> String {
     format!(".yams-init-candidate-{}-", &digest[..12])
 }
 
-fn render_project_page(request: &InitPlanRequest) -> Result<String, InitError> {
-    let page = &request.project_page;
+fn retained_project_page(
+    inspection: &super::InitInspection,
+    retained: &BTreeMap<String, Vec<u8>>,
+) -> Result<String, InitError> {
+    let path = match inspection.layout {
+        super::LayoutClass::Minimal => ".agents/memory/project-context.md",
+        super::LayoutClass::Full => ".agents/memory/pages/project-context.md",
+        _ => {
+            return Err(InitError::InvalidRequest(
+                "project_page (--project-page) is required for absent or partial layouts; automatic retention requires a minimal or full layout"
+                    .to_owned(),
+            ));
+        }
+    };
+    let bytes = retained.get(path).ok_or_else(|| {
+        InitError::InvalidRequest("the inspected project-context page is missing".to_owned())
+    })?;
+    String::from_utf8(bytes.clone()).map_err(|_| {
+        InitError::InvalidRequest("the inspected project-context page is not UTF-8".to_owned())
+    })
+}
+
+fn render_project_page(page: &super::ProjectPageRequest, date: &str) -> Result<String, InitError> {
     let create = CreateRequest {
         title: page.title.clone(),
         page_type: page.page_type,
@@ -812,7 +838,7 @@ fn render_project_page(request: &InitPlanRequest) -> Result<String, InitError> {
         summary: page.summary.clone(),
         related: Vec::new(),
     };
-    let rendered = render_create(&create, &request.date)
+    let rendered = render_create(&create, date)
         .map_err(|error| InitError::InvalidRequest(error.to_string()))?;
     let parsed =
         parse_wiki_page(&rendered).map_err(|error| InitError::InvalidRequest(error.to_string()))?;

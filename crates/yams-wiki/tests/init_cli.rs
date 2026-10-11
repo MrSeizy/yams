@@ -101,7 +101,7 @@ fn request(inspection: &InitInspection, mode: InitMode) -> InitPlanRequest {
         mode,
         date: "2026-08-12".to_owned(),
         agents_md: AGENT_POLICY.to_owned(),
-        project_page: ProjectPageRequest {
+        project_page: Some(ProjectPageRequest {
             title: "Project context".to_owned(),
             page_type: PageType::ProjectState,
             fact: "The fictional project uses approved initialization manifests.".to_owned(),
@@ -109,7 +109,7 @@ fn request(inspection: &InitInspection, mode: InitMode) -> InitPlanRequest {
             how_to_apply: "Inspect, plan, approve, and apply.".to_owned(),
             falsified_by: "An unapproved mutation succeeds.".to_owned(),
             summary: "Memory initialization is manifest-driven.".to_owned(),
-        },
+        }),
     }
 }
 
@@ -252,6 +252,53 @@ fn plan_from_inspect_binds_inspection_and_omits_a_hand_copied_request() {
         inspection.inspection_sha256
     );
     assert_eq!(envelope.manifest.mode, InitMode::Full);
+}
+
+#[test]
+fn omitted_project_page_requires_existing_memory_and_retains_it_during_migration() {
+    let repository = Repository::new("retain project page");
+    let inspection_path = repository._temporary.path().join("inspection.json");
+    let inspection = inspect_cli(&repository.root);
+    write_json(&inspection_path, &inspection);
+    let missing = cargo_bin_cmd!("yams-wiki")
+        .args(["init", "plan", "--from-inspect"])
+        .arg(&inspection_path)
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2), "{missing:?}");
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("--project-page"));
+    assert!(!repository.root.join(".agents").exists());
+
+    let envelope = yams_wiki::plan_repository(&request(&inspection, InitMode::Minimal)).unwrap();
+    let applied = yams_wiki::apply_manifest(&envelope);
+    assert!(applied.ok && applied.validated, "{applied:?}");
+    let flat_path = repository.root.join(".agents/memory/project-context.md");
+    let before = fs::read_to_string(&flat_path)
+        .unwrap()
+        .replace("status: current", "status: historical");
+    fs::write(&flat_path, &before).unwrap();
+    repository.commit_all();
+    write_json(&inspection_path, &inspect_cli(&repository.root));
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["init", "plan", "--from-inspect"])
+        .arg(&inspection_path)
+        .args(["--date", "2026-10-10"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let migration: ManifestEnvelope = one_json_line(&output.stdout);
+    let applied = yams_wiki::apply_manifest(&migration);
+    assert!(applied.ok && applied.validated, "{applied:?}");
+    assert_eq!(
+        fs::read_to_string(
+            repository
+                .root
+                .join(".agents/memory/pages/project-context.md")
+        )
+        .unwrap(),
+        before
+    );
+    assert!(!flat_path.exists());
 }
 
 #[test]

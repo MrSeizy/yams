@@ -123,7 +123,7 @@ fn capabilities_are_one_stable_json_line() {
             "contracts": {
                 "search_results": 1,
                 "repository_layout": 1,
-                "init_manifest": 3,
+                "init_manifest": 4,
                 "wiki_maintenance": 2,
                 "graph_expansion": 1,
                 "supersession": 1
@@ -133,7 +133,7 @@ fn capabilities_are_one_stable_json_line() {
 
     let version = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap();
     let expected = format!(
-        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":3,\"wiki_maintenance\":2,\"graph_expansion\":1,\"supersession\":1}}}}\n"
+        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":4,\"wiki_maintenance\":2,\"graph_expansion\":1,\"supersession\":1}}}}\n"
     );
     assert_eq!(output.stdout, expected.as_bytes());
 }

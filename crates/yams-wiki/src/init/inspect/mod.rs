@@ -166,9 +166,14 @@ fn capture_repository_with_hooks(
             heading_count: 0,
             exact: false,
         });
+    let policy_recognized = policy.exact
+        || agents_source
+            .and_then(Result::ok)
+            .and_then(super::policy::upgrade_legacy_policy)
+            .is_some();
     match policy.heading_count {
         0 => {}
-        1 if policy.exact => {}
+        1 if policy_recognized => {}
         1 => push_conflict(
             &mut inventory.conflicts,
             "AGENTS.md",
@@ -201,7 +206,7 @@ fn capture_repository_with_hooks(
     let mut full_conflicts = Vec::new();
     let full_valid = validate_full_layout(
         &root,
-        policy.exact,
+        policy_recognized,
         flat_kind,
         schema_exact,
         index_kind,
@@ -226,7 +231,7 @@ fn capture_repository_with_hooks(
 
     let layout = if !artifact_present {
         LayoutClass::Absent
-    } else if inventory.conflicts.is_empty() && policy.exact && flat_valid && !structured {
+    } else if inventory.conflicts.is_empty() && policy_recognized && flat_valid && !structured {
         LayoutClass::Minimal
     } else if inventory.conflicts.is_empty() && full_valid {
         LayoutClass::Full

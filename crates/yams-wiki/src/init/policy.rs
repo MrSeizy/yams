@@ -7,6 +7,31 @@ pub struct PolicyInspection {
 }
 
 pub fn inspect_policy(source: &str) -> PolicyInspection {
+    let (heading_count, range) = policy_section(source);
+    PolicyInspection {
+        heading_count,
+        exact: range.is_some_and(|range| source[range].trim_end() == AGENT_POLICY.trim_end()),
+    }
+}
+
+/// Upgrade only the exact original policy, preserving all surrounding bytes.
+/// This produces a proposal; inspection and planning never write it themselves.
+pub(crate) fn upgrade_legacy_policy(source: &str) -> Option<String> {
+    const ORIGINAL_POLICY_SHA256: &str =
+        "8c9206fa774c3893c162c77ed9822e51945488346f678e00291862c754c4dee4";
+    let (_, range) = policy_section(source);
+    let range = range?;
+    let owned = source[range.clone()].trim_end();
+    if super::sha256(format!("{owned}\n").as_bytes()) != ORIGINAL_POLICY_SHA256 {
+        return None;
+    }
+    let mut upgraded = source[..range.start].to_owned();
+    upgraded.push_str(AGENT_POLICY.trim_end());
+    upgraded.push_str(&source[range.start + owned.len()..]);
+    Some(upgraded)
+}
+
+fn policy_section(source: &str) -> (usize, Option<std::ops::Range<usize>>) {
     let mut headings = Vec::new();
     let mut level_two = Vec::new();
     let mut fence = None;
@@ -32,22 +57,18 @@ pub fn inspect_policy(source: &str) -> PolicyInspection {
         offset += raw_line.len();
     }
 
-    let exact = if headings.len() == 1 {
+    let range = if headings.len() == 1 {
         let start = headings[0];
         let end = level_two
             .iter()
             .copied()
             .find(|candidate| *candidate > start)
             .unwrap_or(source.len());
-        source[start..end].trim_end() == AGENT_POLICY.trim_end()
+        Some(start..end)
     } else {
-        false
+        None
     };
-
-    PolicyInspection {
-        heading_count: headings.len(),
-        exact,
-    }
+    (headings.len(), range)
 }
 
 fn opens_fence(line: &str) -> Option<(u8, usize)> {
@@ -89,6 +110,31 @@ fn closes_fence(line: &str, marker: u8, opening_width: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_upgrade_preserves_byte_boundaries_and_protects_custom_sections() {
+        let original = include_str!("../../tests/fixtures/agent-policy-v1-original.md");
+        for tail in ["", "\n", " \t\n\n", "\n\n## Build\nFictional command.\n"] {
+            let before = format!("# Fictional\n\n{}{tail}", original.trim_end());
+            assert_eq!(
+                upgrade_legacy_policy(&before).unwrap(),
+                format!("# Fictional\n\n{}{tail}", AGENT_POLICY.trim_end())
+            );
+        }
+        for custom in [
+            original.replace('\n', "\r\n"),
+            format!("{original}\n```md\nExtra instructions.\n```\n"),
+            format!("```md\n{original}```\n"),
+            format!("{original}\n{original}"),
+        ] {
+            assert!(upgrade_legacy_policy(&custom).is_none());
+        }
+        let prefix = format!("```md\n{original}```\n\n");
+        assert_eq!(
+            upgrade_legacy_policy(&format!("{prefix}{original}")).unwrap(),
+            format!("{prefix}{AGENT_POLICY}")
+        );
+    }
 
     #[test]
     fn no_heading_is_not_exact() {

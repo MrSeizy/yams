@@ -88,7 +88,7 @@ fn request(
         mode,
         date: "2026-08-12".to_owned(),
         agents_md: agents_md.into(),
-        project_page: project_page(),
+        project_page: Some(project_page()),
     }
 }
 
@@ -740,7 +740,10 @@ fn original_v1_schema_is_recognized_and_upgrade_is_explicitly_planned() {
     assert_eq!(inspection.layout, LayoutClass::Full, "{inspection:?}");
     assert!(inspection.conflicts.is_empty());
     assert_eq!(fs::read_to_string(&schema).unwrap(), ORIGINAL);
-    let envelope = plan_repository(&request(&inspection, InitMode::Full, AGENT_POLICY)).unwrap();
+    let mut upgrade = request(&inspection, InitMode::Full, AGENT_POLICY);
+    upgrade.date = "2026-10-10".to_owned();
+    upgrade.project_page = None;
+    let envelope = plan_repository(&upgrade).unwrap();
     assert_eq!(envelope.manifest.operations.len(), 1, "{envelope:?}");
     assert_eq!(
         envelope.manifest.operations[0].path,
@@ -749,6 +752,7 @@ fn original_v1_schema_is_recognized_and_upgrade_is_explicitly_planned() {
     assert_eq!(fs::read_to_string(&schema).unwrap(), ORIGINAL);
     let result = apply_manifest(&envelope);
     assert!(result.ok, "{result:?}");
+    assert!(result.validated, "{result:?}");
     assert_eq!(fs::read_to_string(&schema).unwrap(), SCHEMA);
     // A similar user-authored schema is still protected from replacement.
     fs::write(&schema, format!("{ORIGINAL}Custom guidance.\n")).unwrap();
@@ -760,4 +764,94 @@ fn original_v1_schema_is_recognized_and_upgrade_is_explicitly_planned() {
             .iter()
             .any(|conflict| conflict.code == "schema-mismatch")
     );
+}
+
+#[test]
+fn original_policy_upgrade_is_proposed_and_preserves_unrelated_instructions() {
+    const ORIGINAL: &str = include_str!("fixtures/agent-policy-v1-original.md");
+    for mode in [InitMode::Minimal, InitMode::Full] {
+        let repository = Repository::new("original policy upgrade");
+        initialize(&repository, mode, AGENT_POLICY);
+        let agents = repository.root.join("AGENTS.md");
+        let prefix = "# Fictional project\n\nKeep unrelated instructions.\n\n";
+        let suffix = "\n\n## Build\nRun fictional tests.\n";
+        let before = format!("{prefix}{}{suffix}", ORIGINAL.trim_end());
+        fs::write(&agents, &before).unwrap();
+        let page_path = repository.root.join(if mode == InitMode::Full {
+            ".agents/memory/pages/project-context.md"
+        } else {
+            ".agents/memory/project-context.md"
+        });
+        let original_page = fs::read_to_string(&page_path).unwrap();
+        let mut retained = original_page.replace("status: current", "status: historical");
+        retained.push_str("\nPreserve this extra paragraph and [[project-context]] link.\n");
+        if mode == InitMode::Full {
+            fs::write(
+                page_path.with_file_name("current-context.md"),
+                original_page
+                    .replace("slug: project-context", "slug: current-context")
+                    .replace("title: Project context", "title: Current context"),
+            )
+            .unwrap();
+            retained.push_str("\n**Superseded by:** [[current-context]]\n");
+        }
+        fs::write(&page_path, &retained).unwrap();
+        if mode == InitMode::Full {
+            reindex_wiki(
+                &repository.root.join(".agents/memory"),
+                &ReindexOptions::default(),
+            )
+            .unwrap();
+        }
+        repository.commit_all();
+        let inspection = inspect_repository(&repository.root).unwrap();
+        assert!(inspection.conflicts.is_empty(), "{inspection:?}");
+        assert_eq!(
+            inspection.layout,
+            if mode == InitMode::Full {
+                LayoutClass::Full
+            } else {
+                LayoutClass::Minimal
+            }
+        );
+        // A later policy-only upgrade must not reset evidence, status, links or dates.
+        let mut upgrade = request(&inspection, mode, "");
+        upgrade.date = "2026-10-10".to_owned();
+        upgrade.project_page = None;
+        let envelope = plan_repository(&upgrade).unwrap();
+        assert_eq!(envelope.manifest.operations.len(), 1);
+        assert_eq!(envelope.manifest.operations[0].path, "AGENTS.md");
+        assert_eq!(fs::read_to_string(&agents).unwrap(), before);
+        let result = apply_manifest(&envelope);
+        assert!(result.ok, "{result:?}");
+        assert!(result.validated, "{result:?}");
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), retained);
+        assert_eq!(
+            fs::read_to_string(&agents).unwrap(),
+            format!("{prefix}{}{suffix}", AGENT_POLICY.trim_end())
+        );
+        repository.commit_all();
+        // A supplied project page still requests an explicit replacement.
+        let inspected = inspect_repository(&repository.root).unwrap();
+        let mut replacement = request(&inspected, mode, "");
+        replacement.date = "2026-10-10".to_owned();
+        let proposed = plan_repository(&replacement).unwrap();
+        assert!(proposed.manifest.operations.iter().any(|operation| {
+            operation.path.ends_with("/project-context.md")
+                && operation.content.as_ref().is_some_and(|text| {
+                    text.contains("status: current") && text.contains("verified: 2026-10-10")
+                })
+        }));
+        // A customized old policy remains protected, including duplicate headings.
+        for custom in [
+            before.replace("Search early", "Search late"),
+            format!("{before}\n{ORIGINAL}"),
+        ] {
+            fs::write(&agents, custom).unwrap();
+            repository.commit_all();
+            let inspected = inspect_repository(&repository.root).unwrap();
+            assert!(!inspected.conflicts.is_empty());
+            assert!(plan_repository(&request(&inspected, mode, "")).is_err());
+        }
+    }
 }

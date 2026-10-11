@@ -101,7 +101,7 @@ enum InitCommand {
         /// Calendar date for the project page. Defaults to the local date.
         #[arg(long, requires = "from_inspect")]
         date: Option<String>,
-        /// Project-page JSON object. Required with `--from-inspect`.
+        /// New project-page JSON. Omit to retain an existing valid page.
         #[arg(long, requires = "from_inspect")]
         project_page: Option<PathBuf>,
         /// Optional exact AGENTS.md file. Omit to use the canonical policy path.
@@ -267,10 +267,6 @@ fn assemble_plan_request(
         write_diagnostic(stderr, "init plan requires --request or --from-inspect")?;
         return Ok(None);
     };
-    let Some(project_page_path) = args.project_page else {
-        write_diagnostic(stderr, "init plan --from-inspect requires --project-page")?;
-        return Ok(None);
-    };
     let inspection: InitInspection = match read_bounded_json(inspection_path) {
         Ok(inspection) => inspection,
         Err(error) => {
@@ -278,12 +274,15 @@ fn assemble_plan_request(
             return Ok(None);
         }
     };
-    let project_page: ProjectPageRequest = match read_bounded_json(project_page_path) {
-        Ok(page) => page,
-        Err(error) => {
-            write_plan_input_error(project_page_path, "project page", error, stderr)?;
-            return Ok(None);
-        }
+    let project_page: Option<ProjectPageRequest> = match args.project_page {
+        None => None,
+        Some(path) => match read_bounded_json(path) {
+            Ok(page) => Some(page),
+            Err(error) => {
+                write_plan_input_error(path, "project page", error, stderr)?;
+                return Ok(None);
+            }
+        },
     };
     let agents_md = match args.agents_md {
         None => String::new(),

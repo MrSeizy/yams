@@ -25,7 +25,8 @@ mod tests {
 
     const EXPECTED_POLICY: &str = concat!(
         "## Project memory\n\n",
-        "- Search early with `yams --json -k 5 \"<focused question>\"` when project history, conventions, decisions, or prior failures may matter.\n",
+        "- Search early with `yams --json -k 5 \"<focused question>\"` before changing storage schemas or migrations, public APIs/CLI/protocols, architecture or dependencies, or build/release workflows; when diagnosing recurring or surprising failures; or before revisiting a recorded design decision. Name the relevant subsystem and symbol, format, or command in the question.\n",
+        "- Reuse memory already verified for the same decision; search again when scope or evidence changes. Skip purely mechanical edits with no effect on behavior, contracts, or prior decisions.\n",
         "- Treat hits as leads and verify consequential claims against current code, tests, documentation, or Git history.\n",
         "- Interpret exit status 1 as an empty result from a searched store. Retry exit status 3, below the confidence gate, once with `--no-gate` for possible leads. Treat exit status 4 as an operational failure whose JSON names the fault — when the JSON `code` is `store_missing`, run `yams --index` from the project — and never as missing memory.\n",
         "- Never initialize a missing corpus unless the user explicitly asks.\n",
@@ -82,7 +83,7 @@ mod tests {
                 .lines()
                 .filter(|line| line.starts_with("- "))
                 .count(),
-            7
+            8
         );
         assert_eq!(INDEX_TEMPLATE, format!("{BEGIN_MARKER}\n\n{END_MARKER}\n"));
         for (name, asset) in [
@@ -127,7 +128,7 @@ mod tests {
             (
                 "agent-policy.md",
                 AGENT_POLICY,
-                "8c9206fa774c3893c162c77ed9822e51945488346f678e00291862c754c4dee4",
+                "5aad49e9ab8791009a7cbd0035be0bc36d77d9f60e32127ffd0c1769a71cf186",
             ),
             (
                 "index-template.md",
@@ -145,7 +146,7 @@ mod tests {
 
         let contracts = capabilities().contracts;
         assert_eq!(contracts.repository_layout, LAYOUT_VERSION);
-        assert_eq!(contracts.init_manifest, 3);
+        assert_eq!(contracts.init_manifest, 4);
     }
 
     #[test]

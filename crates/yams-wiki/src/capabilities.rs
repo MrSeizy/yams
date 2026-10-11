@@ -33,7 +33,7 @@ pub const fn capabilities() -> Capabilities {
         contracts: CapabilityContracts {
             search_results: 1,
             repository_layout: 1,
-            init_manifest: 3,
+            init_manifest: 4,
             wiki_maintenance: 2,
             graph_expansion: 1,
             supersession: 1,
@@ -55,7 +55,7 @@ mod tests {
                 contracts: CapabilityContracts {
                     search_results: 1,
                     repository_layout: 1,
-                    init_manifest: 3,
+                    init_manifest: 4,
                     wiki_maintenance: 2,
                     graph_expansion: 1,
                     supersession: 1,

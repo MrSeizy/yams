@@ -11,6 +11,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Concrete memory consultation triggers for schemas and migrations, public
+  interfaces, architecture and dependency choices, build/release workflows,
+  recurring failures and prior decisions. Mechanical edits can skip retrieval,
+  and relevant verified memory can be reused within the same decision.
+- Initialization recognizes the original Project memory policy and proposes its
+  replacement through the existing reviewed manifest, preserving unrelated
+  instructions. Customized policies and duplicate headings remain protected.
+- `init_manifest: 4`: omit the project-page input on an existing valid corpus
+  to preserve its exact contents during policy/schema upgrades or layout
+  migration. Creating memory still requires a project page; supplying one
+  deliberately replaces it.
 - `yams-wiki supersede WIKI_ROOT SLUG --by REPLACEMENT` preserves old evidence,
   marks it historical, and records an explicit replacement without changing the
   eight-field frontmatter format. The JSON writer supports the same operation.

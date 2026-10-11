@@ -110,7 +110,7 @@ mod tests {
             mode,
             date: "2026-08-12".to_owned(),
             agents_md,
-            project_page: project_page("Project context"),
+            project_page: Some(project_page("Project context")),
         }
     }
 
@@ -178,14 +178,14 @@ mod tests {
         let initial = request(root, InitMode::Minimal, AGENT_POLICY.to_owned());
         let page = crate::render_create(
             &crate::CreateRequest {
-                title: initial.project_page.title,
-                page_type: initial.project_page.page_type,
+                title: initial.project_page.as_ref().unwrap().title.clone(),
+                page_type: initial.project_page.as_ref().unwrap().page_type,
                 owner: crate::Owner::Shared,
-                fact: initial.project_page.fact,
-                why: initial.project_page.why,
-                how_to_apply: initial.project_page.how_to_apply,
-                falsified_by: initial.project_page.falsified_by,
-                summary: initial.project_page.summary,
+                fact: initial.project_page.as_ref().unwrap().fact.clone(),
+                why: initial.project_page.as_ref().unwrap().why.clone(),
+                how_to_apply: initial.project_page.as_ref().unwrap().how_to_apply.clone(),
+                falsified_by: initial.project_page.as_ref().unwrap().falsified_by.clone(),
+                summary: initial.project_page.as_ref().unwrap().summary.clone(),
                 related: Vec::new(),
             },
             &initial.date,
@@ -592,7 +592,7 @@ mod tests {
             mode: InitMode::Full,
             date: "2026-08-12".to_owned(),
             agents_md: AGENT_POLICY.to_owned(),
-            project_page: project_page("Project context"),
+            project_page: Some(project_page("Project context")),
         };
 
         let envelope = plan_repository(&request).unwrap();
@@ -674,7 +674,7 @@ mod tests {
             let request = request(&root, InitMode::Full, AGENT_POLICY.to_owned());
             plan_repository(&request).unwrap();
             let mut invalid = request;
-            invalid.project_page.fact = "An out-of-profile ![[embed]] is refused.".to_owned();
+            invalid.project_page.as_mut().unwrap().fact = "An out-of-profile ![[embed]] is refused.".to_owned();
             assert!(matches!(
                 plan_repository(&invalid),
                 Err(crate::InitError::Candidate(_))
@@ -1148,13 +1148,13 @@ mod tests {
         ));
 
         invalid_policy.agents_md = AGENT_POLICY.to_owned();
-        invalid_policy.project_page = project_page("Another context");
+        invalid_policy.project_page = Some(project_page("Another context"));
         assert!(matches!(
             plan_repository(&invalid_policy),
             Err(crate::InitError::InvalidRequest(_))
         ));
 
-        invalid_policy.project_page = project_page("Project context");
+        invalid_policy.project_page = Some(project_page("Project context"));
         invalid_policy.date = "2026-8-12".to_owned();
         assert!(matches!(
             plan_repository(&invalid_policy),
@@ -1190,7 +1190,7 @@ mod tests {
             mode: InitMode::Minimal,
             date: "2026-08-12".to_owned(),
             agents_md: AGENT_POLICY.to_owned(),
-            project_page: project_page("Project context"),
+            project_page: Some(project_page("Project context")),
         };
         assert!(matches!(
             plan_repository(&unattainable),
@@ -1372,7 +1372,7 @@ mod tests {
         let repository = repository();
         let request = request(repository.path(), InitMode::Full, AGENT_POLICY.to_owned());
         let snapshot = super::capture_repository(Path::new(&request.root)).unwrap();
-        let page = super::render_project_page(&request).unwrap();
+        let page = super::render_project_page(request.project_page.as_ref().unwrap(), &request.date).unwrap();
         let mut desired =
             super::desired_candidate(&request, &snapshot.contents, &snapshot.inspection, page);
         super::canonicalize_full_index(&mut desired).unwrap();
@@ -1435,7 +1435,7 @@ mod tests {
             InitMode::Minimal,
             AGENT_POLICY.to_owned(),
         );
-        replacement.project_page.fact =
+        replacement.project_page.as_mut().unwrap().fact =
             "The fictional project replaced its retained read-only context.".to_owned();
 
         let replaced = plan_repository(&replacement).unwrap();
@@ -1509,12 +1509,12 @@ mod tests {
         assert_no_new_candidate_siblings(minimal.path(), || plan_repository(&upgrade)).unwrap();
 
         let mut replacement = request(minimal.path(), InitMode::Minimal, AGENT_POLICY.to_owned());
-        replacement.project_page.fact =
+        replacement.project_page.as_mut().unwrap().fact =
             "The fictional project replaced its retained read-only context.".to_owned();
         assert_no_new_candidate_siblings(minimal.path(), || plan_repository(&replacement)).unwrap();
 
         let mut invalid = request(minimal.path(), InitMode::Full, AGENT_POLICY.to_owned());
-        invalid.project_page.fact = "An out-of-profile ![[embed]] is refused.".to_owned();
+        invalid.project_page.as_mut().unwrap().fact = "An out-of-profile ![[embed]] is refused.".to_owned();
         assert!(matches!(
             assert_no_new_candidate_siblings(minimal.path(), || plan_repository(&invalid)),
             Err(crate::InitError::Candidate(_))

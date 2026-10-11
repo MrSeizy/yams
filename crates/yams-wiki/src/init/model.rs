@@ -96,7 +96,10 @@ pub struct InitPlanRequest {
     /// the canonical Project memory section when that is valid.
     #[serde(default)]
     pub agents_md: String,
-    pub project_page: ProjectPageRequest,
+    /// Omit or use null to retain an existing valid project-context page.
+    /// Required when creating memory; supplying a page replaces its contents.
+    #[serde(default)]
+    pub project_page: Option<ProjectPageRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -184,7 +187,7 @@ mod tests {
             mode: InitMode::Full,
             date: "2026-08-12".to_owned(),
             agents_md: "# Agent policy\n".to_owned(),
-            project_page: project_page(),
+            project_page: Some(project_page()),
         }
     }
 
@@ -486,6 +489,23 @@ mod tests {
 
     #[test]
     fn omitted_and_null_optional_fields_deserialize_as_none() {
+        let mut omitted_page = serde_json::to_value(plan_request()).unwrap();
+        omitted_page.as_object_mut().unwrap().remove("project_page");
+        assert!(
+            serde_json::from_value::<InitPlanRequest>(omitted_page)
+                .unwrap()
+                .project_page
+                .is_none()
+        );
+        let mut null_page = serde_json::to_value(plan_request()).unwrap();
+        null_page["project_page"] = Value::Null;
+        assert!(
+            serde_json::from_value::<InitPlanRequest>(null_page)
+                .unwrap()
+                .project_page
+                .is_none()
+        );
+
         let mut omitted_prestate = serde_json::to_value(prestate()).unwrap();
         for field in ["mode", "sha256", "entries_sha256"] {
             omitted_prestate.as_object_mut().unwrap().remove(field);

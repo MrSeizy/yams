@@ -284,6 +284,27 @@ saves the page safely. `capabilities --json` reports the interface
 versions (`search_results`, `repository_layout`, `init_manifest`,
 `wiki_maintenance`, `graph_expansion`, `supersession`) that adapters and the skills check against.
 
+### When to consult memory
+
+The installed Project memory policy names the decisions that benefit from an
+early lookup: storage schemas and migrations; public APIs, CLI and protocol
+contracts; architecture, dependencies and build/release workflows; recurring
+failures; and changes to earlier design decisions. Query with the actual
+subsystem and symbol, format or command before choosing an implementation.
+Reuse relevant memory already verified for that decision, and skip purely
+mechanical edits that do not affect behavior or contracts.
+
+Existing repositories can upgrade the exact original policy through
+`yams-wiki init inspect`, `plan` and an approved `apply`. The planner preserves
+surrounding instructions and includes the policy change in the manifest;
+customized policies remain conflicts. With `init_manifest >= 4`, omit
+`--project-page` (or `project_page` in request JSON) on a valid `minimal` or
+`full` layout to retain the existing page byte-for-byte, including its dates,
+links and historical status. Absent or partial layouts require explicit page input.
+Supply a project page only when creating memory or deliberately replacing that
+page; a supplied page is freshly rendered. Inspection describes the valid
+layout; the plan shows whether the policy or schema needs an upgrade.
+
 ### Replace outdated knowledge
 
 Write and verify the replacement page, then preserve the old evidence with:
