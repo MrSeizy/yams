@@ -73,16 +73,35 @@ impl<'project> RetrievalSnapshot<'project> {
 
     /// Loads the renderer-independent page metadata for this snapshot.
     pub fn page_metadata(&self) -> Result<Vec<PageMetadata>, RetrievalError> {
+        let schema_version: u32 = self
+            .transaction
+            .query_row(
+                "SELECT schema_version FROM metadata WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|source| RetrievalError::Database {
+                operation: "read page metadata schema version",
+                source,
+            })?;
+        // Search opens existing indexes read-only. Released v2 indexes have no
+        // replacement metadata until an explicit index pass migrates them.
+        // Do not hide a missing supersessions table in a current v3 index.
+        let replacement = if schema_version == 2 {
+            "NULL"
+        } else {
+            "(SELECT replacement FROM supersessions WHERE supersessions.path = docs.path)"
+        };
         let mut statement = self
             .transaction
-            .prepare(
+            .prepare(&format!(
                 "SELECT path, corpus, status, \
                  (SELECT embed_text FROM chunks \
                   WHERE chunks.path = docs.path \
                   ORDER BY ordinal, id LIMIT 1), \
-                 (SELECT replacement FROM supersessions WHERE supersessions.path = docs.path) \
+                 {replacement} \
                  FROM docs ORDER BY path",
-            )
+            ))
             .map_err(|source| RetrievalError::Database {
                 operation: "prepare page metadata",
                 source,

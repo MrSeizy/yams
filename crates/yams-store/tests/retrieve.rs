@@ -359,6 +359,26 @@ fn dense_fixture() -> DenseFixture {
 }
 
 #[test]
+fn current_schema_requires_the_supersessions_table() {
+    let fixture = dense_fixture();
+    fixture
+        .project
+        .execute("DROP TABLE supersessions", [])
+        .unwrap();
+
+    let snapshot = RetrievalSnapshot::begin(&fixture.project).unwrap();
+    let error = snapshot.page_metadata().unwrap_err();
+
+    assert!(matches!(
+        error,
+        RetrievalError::Database {
+            operation: "prepare page metadata",
+            ..
+        }
+    ));
+}
+
+#[test]
 fn public_snapshot_handle_composes_lexical_dense_and_ranking_reads() {
     let fixture = dense_fixture();
     fixture

@@ -116,11 +116,19 @@ after any formula change. Use only fictional, run-owned test data.
    and the next start reclaims it.
 9. Upgrade drill (when a previous release exists): install the previous
    formula revision (the exact recipe is in the Rollback section of
-   `docs/release/publishing.md`); `brew list --versions yams` to
-   record the installed version; `brew upgrade` to the candidate; `brew
-   list --versions yams` again to confirm the running version changed;
-   confirm the caveat about `brew services restart` and that queries
-   still answer throughout.
+   `docs/release/publishing.md`). In a new scratch project, build and query a
+   fictional index with that previous binary, then record the installed version with
+   `brew list --versions yams`. Upgrade to the candidate and confirm its
+   version. **Before running `yams --index` again**, query the previous
+   release's unchanged index through direct search, `--all`, and the
+   restarted service. Before the service query, run `brew services restart yams`,
+   confirm the service is running, and wait for the socket file to be replaced
+   (its inode or modification time must change from the leftover socket in
+   step 8). Use the step 7 query with `YAMS_SERVICE_SOCKET` and no `YAMS_HOME`
+   override; setting the socket alone does not prevent fallback to direct search.
+   Queries must still succeed without migrating the index.
+   Then run `yams --index` and repeat the queries to cover the migrated store.
+   Confirm the caveat about `brew services restart` throughout this drill.
 10. Uninstall: `brew uninstall yams`; binaries gone (`brew list
    --versions yams` prints nothing); state under
    `~/Library/Caches/yams` and `~/Library/Application Support/yams`

@@ -38,6 +38,43 @@ fn write_argv_is_rejected_without_running_a_handler_body() {
 }
 
 #[test]
+fn service_search_reads_legacy_v2_indexes_without_migration() {
+    let fixture = IndexedFixture::new(false);
+    let home = StoreHome::new(&fixture.state);
+    let connection = yams_store::open_project(&home, &fixture.project).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE supersessions; \
+             UPDATE metadata SET schema_version = 2 WHERE singleton = 1;",
+        )
+        .unwrap();
+    drop(connection);
+    let index = home.project_path(&fixture.project).unwrap();
+    let before = std::fs::read(&index).unwrap();
+    let model = Arc::new(Mutex::new(UnitEmbedder));
+    let signature: Arc<str> = Arc::from(TEST_SIGNATURE);
+
+    for argv in [
+        vec!["--json", "--no-gate", "alpha"],
+        vec!["--json", "--all", "--no-gate", "alpha"],
+    ] {
+        let output = service_binary::execute_request(
+            &fixture.environment,
+            &model,
+            &signature,
+            1,
+            fixture.request(&argv),
+        );
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let hits: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(hits.as_array().unwrap().len(), 1);
+        assert_eq!(hits[0]["name"], "Alpha");
+        assert!(hits[0].get("superseded_by").is_none());
+        assert_eq!(std::fs::read(&index).unwrap(), before);
+    }
+}
+
+#[test]
 fn a_paused_embedding_call_does_not_block_an_admitted_management_request() {
     let fixture = IndexedFixture::new(false);
     let (started_tx, started_rx) = mpsc::channel();

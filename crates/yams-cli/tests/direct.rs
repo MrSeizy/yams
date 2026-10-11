@@ -150,6 +150,65 @@ fn search_executes_against_existing_index_and_renders_json() {
 }
 
 #[test]
+fn direct_and_all_search_read_legacy_v2_indexes_without_migration() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let corpus_path = project.join(".agents/memory");
+    fs::create_dir_all(&corpus_path).unwrap();
+    fs::write(
+        corpus_path.join("alpha.md"),
+        "---\ntitle: Alpha\nstatus: current\n---\n\nalpha search evidence\n",
+    )
+    .unwrap();
+    let state = temporary.path().join("state");
+    let home = StoreHome::new(&state);
+    let corpus = Corpus::validated(&corpus_path, CorpusKind::Shared).unwrap();
+    synchronize(
+        &home,
+        &project,
+        &scan_corpora(&[corpus]),
+        &mut UnitEmbed,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    let connection = open_project(&home, &project).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE supersessions; \
+             UPDATE metadata SET schema_version = 2 WHERE singleton = 1;",
+        )
+        .unwrap();
+    drop(connection);
+    let index = home.project_path(&project).unwrap();
+    let before = fs::read(&index).unwrap();
+
+    for args in [
+        vec!["yams", "--json", "--no-gate", "alpha"],
+        vec!["yams", "--json", "--all", "--no-gate", "alpha"],
+    ] {
+        let completion = execute_direct_with_embedder(
+            args,
+            [(OsString::from("YAMS_HOME"), state.clone().into_os_string())],
+            &inputs(&project),
+            &[],
+            &when(),
+            &mut UnitEmbed,
+        );
+        assert_eq!(completion.exit_code, ExitCode::Ok, "{}", completion.stdout);
+        let hits: serde_json::Value = serde_json::from_str(&completion.stdout).unwrap();
+        assert_eq!(hits.as_array().unwrap().len(), 1);
+        assert_eq!(hits[0]["name"], "Alpha");
+        assert_eq!(hits[0]["status"], "current");
+        assert!(hits[0].get("superseded_by").is_none());
+        assert_eq!(
+            fs::read(&index).unwrap(),
+            before,
+            "search must stay read-only"
+        );
+    }
+}
+
+#[test]
 fn real_direct_text_and_json_overflow_use_the_exact_limit_completion() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

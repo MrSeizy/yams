@@ -89,6 +89,8 @@ Project store schema v3 records relations from complete source pages, separately
 from chunks, so chunk boundaries cannot create or erase declarations. Exact v1
 and v2 stores migrate in the existing transaction. The next index pass backfills
 relations from unchanged sources; a compatible v2 store reuses its embeddings.
+Existing v2 indexes remain searchable before that index pass. Search treats
+them as having no recorded replacements and leaves their stored bytes unchanged.
 In shared memory, malformed declarations abort indexing without publishing
 partial changes. Older pages may have free-form forward links written under the
 original guidance. If a line starts `**Superseded by:**` but is not in the new

@@ -9,6 +9,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Searching an existing v0.1.0 (schema v2) index no longer fails with
+  `store_operational: no such table: supersessions` after upgrading. Direct,
+  service, and `--all` lookups remain read-only and work before reindexing.
+  An explicit index pass still migrates and backfills replacement metadata.
+
 ## [0.2.0] — 2026-10-10
 
 Graph expansion, supersession-aware retrieval, and concrete memory consultation
