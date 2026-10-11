@@ -202,6 +202,19 @@ struct SystemPreflight;
 
 impl Preflight for SystemPreflight {}
 
+/// Check the wiki inputs before lock acquisition can create a lock file.
+/// The descriptor-based capture still revalidates every input after preflight.
+pub(crate) fn capture_existing_wiki(corpus: &Path) -> Result<WikiSnapshot, CheckError> {
+    if let Some(detail) = preflight_failure(corpus, &mut SystemPreflight) {
+        return Err(CheckError::Io {
+            operation: "capture wiki at",
+            path: corpus.to_path_buf(),
+            detail,
+        });
+    }
+    capture_wiki(corpus)
+}
+
 fn check_wiki_with(
     corpus: &Path,
     timeout: Duration,
@@ -276,7 +289,7 @@ fn failed_report(failure: String) -> WikiCheckReport {
 /// `[[slug|alias]]` and `[[slug#heading]]` resolve to `slug`. Embeds
 /// (`![[...]]`) and block references (`[[slug#^id]]`) are not links in the
 /// Yams graph and yield no target.
-fn wikilink_targets(source: &str) -> Vec<String> {
+pub(crate) fn wikilink_targets(source: &str) -> Vec<String> {
     let wikilink =
         Regex::new(r"\[\[([a-z0-9-]+)(?:#([^\]|]*))?(?:\|[^\]]*)?\]\]").expect("constant regex");
     let mut targets = Vec::new();

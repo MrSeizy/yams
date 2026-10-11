@@ -10,10 +10,10 @@ use serde::de::DeserializeOwned;
 use serde_json::json;
 use yams_core::{ExitCode, MAX_FILE_BYTES, TerminalText, sanitize_terminal};
 use yams_wiki::{
-    ApplyExitClass, DurableError, InitError, InitInspection, InitMode, InitPlanRequest,
-    ManifestEnvelope, ProjectPageRequest, ReindexOptions, apply_manifest_classified, capabilities,
-    check_wiki, compat_wiki, inspect_repository, plan_repository, plan_request_from_inspection,
-    reindex_wiki, write_json,
+    ApplyExitClass, DurableError, GraphError, GraphPage, InitError, InitInspection, InitMode,
+    InitPlanRequest, ManifestEnvelope, ProjectPageRequest, ReindexOptions,
+    apply_manifest_classified, capabilities, check_wiki, compat_wiki, expand_wiki,
+    inspect_repository, plan_repository, plan_request_from_inspection, reindex_wiki, write_json,
 };
 
 const JSON_INPUT_FLAGS: OFlags = OFlags::RDONLY
@@ -45,6 +45,16 @@ enum Command {
     Check { path: PathBuf },
     /// Report constructs outside the supported Obsidian-compatible profile.
     Compat { path: PathBuf },
+    /// Follow a page's outgoing links and backlinks without a search index or model.
+    Expand {
+        /// Wiki root containing pages/ and INDEX.md.
+        path: PathBuf,
+        /// Exact page slug, without pages/ or .md.
+        slug: String,
+        /// Emit one JSON result or error instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check or regenerate the derived catalog in INDEX.md.
     Catalog {
         path: PathBuf,
@@ -136,6 +146,7 @@ fn execute(
         Command::Init { command } => run_init(command, stdout, stderr),
         Command::Check { path } => run_check(&path, stdout, stderr),
         Command::Compat { path } => run_compat(&path, stderr),
+        Command::Expand { path, slug, json } => run_expand(&path, &slug, json, stdout, stderr),
         Command::Catalog { path, check, adopt } => run_catalog(&path, check, adopt, stdout, stderr),
         Command::Write { path } => run_write(&path, stdout),
     }
@@ -491,6 +502,73 @@ fn run_compat(path: &std::path::Path, stderr: &mut impl Write) -> io::Result<Exi
     } else {
         Ok(ExitCode::Empty)
     }
+}
+
+fn run_expand(
+    path: &Path,
+    slug: &str,
+    json: bool,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let graph = match expand_wiki(path, slug) {
+        Ok(graph) => graph,
+        Err(error) => {
+            let (code, exit) = match &error {
+                GraphError::InvalidSlug => ("invalid_slug", ExitCode::Usage),
+                GraphError::NotFound { .. } => ("page_not_found", ExitCode::Empty),
+                GraphError::InvalidPage { .. } => ("invalid_page", ExitCode::Operational),
+                GraphError::Capture(_) => ("capture_failed", ExitCode::Operational),
+            };
+            if json {
+                write_json_line(
+                    stdout,
+                    &json!({
+                        "ok": false,
+                        "code": code,
+                        "message": error.to_string(),
+                    }),
+                )?;
+            } else {
+                write_diagnostic(stderr, error)?;
+            }
+            return Ok(exit);
+        }
+    };
+    if json {
+        write_json_line(stdout, &json!({"ok": true, "graph": graph}))?;
+    } else {
+        write_graph_page(stdout, &graph.page)?;
+        for (label, pages) in [
+            ("Outgoing", &graph.outgoing),
+            ("Backlinks", &graph.backlinks),
+        ] {
+            writeln!(stdout, "\n{label} ({}):", pages.len())?;
+            for page in pages {
+                write_graph_page(stdout, page)?;
+            }
+        }
+        writeln!(stdout, "\nUnresolved ({}):", graph.unresolved.len())?;
+        for slug in &graph.unresolved {
+            write_diagnostic(stdout, format!("  [[{slug}]]"))?;
+        }
+        if let Some(note) = &graph.isolation_note {
+            write_diagnostic(stderr, format!("graph read without isolation: {note}"))?;
+        }
+    }
+    Ok(ExitCode::Ok)
+}
+
+fn write_graph_page(stdout: &mut impl Write, page: &GraphPage) -> io::Result<()> {
+    write_diagnostic(
+        stdout,
+        format!("{} [{}] — {}", page.slug, page.status.as_str(), page.title),
+    )?;
+    write_diagnostic(
+        stdout,
+        format!("  {} (verified {})", page.path, page.verified),
+    )?;
+    write_diagnostic(stdout, format!("  {}", page.summary))
 }
 
 fn run_catalog(

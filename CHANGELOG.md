@@ -9,7 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `yams-wiki expand WIKI_ROOT SLUG [--json]`: retrieve a page's immediate
+  outgoing links, backlinks, and unresolved targets without a model or
+  search index. Results carry page summaries, paths, lifecycle status,
+  and verification dates; unsafe or malformed pages fail explicitly.
+- Capability contract `graph_expansion: 1` for the graph response and
+  classified failure envelope.
 
 ## [0.1.0] — 2026-08-17
 

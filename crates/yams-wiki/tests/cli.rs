@@ -124,14 +124,15 @@ fn capabilities_are_one_stable_json_line() {
                 "search_results": 1,
                 "repository_layout": 1,
                 "init_manifest": 3,
-                "wiki_maintenance": 2
+                "wiki_maintenance": 2,
+                "graph_expansion": 1
             }
         })
     );
 
     let version = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap();
     let expected = format!(
-        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":3,\"wiki_maintenance\":2}}}}\n"
+        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":3,\"wiki_maintenance\":2,\"graph_expansion\":1}}}}\n"
     );
     assert_eq!(output.stdout, expected.as_bytes());
 }
@@ -143,6 +144,175 @@ fn capabilities_requires_the_json_flag() {
         .assert()
         .code(2)
         .stdout("");
+}
+
+#[test]
+fn expand_returns_one_json_line_without_a_search_store() {
+    let wiki = Wiki::stale();
+    fs::write(
+        wiki.path.join("pages/alpha.md"),
+        format!("{PAGE}\n[[beta|Next]] [[future]]\n"),
+    )
+    .unwrap();
+    fs::write(
+        wiki.path.join("pages/beta.md"),
+        format!(
+            "{}\n[[alpha#Details]]\n",
+            PAGE.replace("slug: alpha", "slug: beta")
+        ),
+    )
+    .unwrap();
+    let before = wiki.index();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha", "--json"])
+        .env("YAMS_HOME", wiki.path.join("no-search-store"))
+        .env("YAMS_ALLOW_NET", "0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stderr, b"");
+    let body = one_json_line(&output.stdout);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["graph"]["page"]["path"], "pages/alpha.md");
+    assert_eq!(body["graph"]["page"]["status"], "current");
+    assert_eq!(body["graph"]["outgoing"][0]["slug"], "beta");
+    assert_eq!(body["graph"]["backlinks"][0]["slug"], "beta");
+    assert_eq!(body["graph"]["unresolved"], json!(["future"]));
+    assert_eq!(body["graph"]["isolated"], true);
+    assert_eq!(wiki.index(), before);
+    assert!(!wiki.path.join("no-search-store").exists());
+}
+
+#[test]
+fn expand_distinguishes_missing_seed_invalid_seed_and_operational_failure() {
+    let empty = tempdir().unwrap();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", empty.path().to_str().unwrap(), "alpha", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(one_json_line(&output.stdout)["code"], "capture_failed");
+    assert!(!empty.path().join(".write.lock").exists());
+
+    let wiki = Wiki::canonical();
+    for (slug, code, exit) in [
+        ("missing", "page_not_found", 1),
+        ("../alpha", "invalid_slug", 2),
+    ] {
+        let output = cargo_bin_cmd!("yams-wiki")
+            .args(["expand", wiki.path.to_str().unwrap(), slug, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(exit));
+        assert_eq!(output.stderr, b"");
+        let body = one_json_line(&output.stdout);
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["code"], code);
+        assert!(body.get("graph").is_none());
+    }
+
+    fs::write(wiki.path.join("pages/broken.md"), "not a canonical page").unwrap();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(output.stderr, b"");
+    let body = one_json_line(&output.stdout);
+    assert_eq!(body["code"], "invalid_page");
+    assert!(body.get("graph").is_none());
+
+    fs::remove_file(wiki.path.join("INDEX.md")).unwrap();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(one_json_line(&output.stdout)["code"], "capture_failed");
+}
+
+#[test]
+fn expand_text_reports_an_isolated_page_and_missing_page_on_separate_channels() {
+    let wiki = Wiki::canonical();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stderr, b"");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "alpha [current] — Alpha beacon\n",
+            "  pages/alpha.md (verified 2026-08-08)\n",
+            "  a fictional beacon needs violet mode\n",
+            "\nOutgoing (0):\n\nBacklinks (0):\n\nUnresolved (0):\n",
+        )
+    );
+    cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "missing"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("no page with slug \"missing\"\n");
+}
+
+#[test]
+fn expand_preserves_unisolated_read_only_diagnostics_in_both_output_modes() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let wiki = Wiki::canonical();
+    if fs::metadata(&wiki.path).unwrap().uid() == 0 {
+        return;
+    }
+    struct RestoreModes(Vec<(PathBuf, fs::Permissions)>);
+    impl Drop for RestoreModes {
+        fn drop(&mut self) {
+            for (path, permissions) in &self.0 {
+                let _ = fs::set_permissions(path, permissions.clone());
+            }
+        }
+    }
+    let paths = [wiki.path.clone(), wiki.path.join("pages")];
+    let files = [wiki.path.join("INDEX.md"), wiki.path.join("pages/alpha.md")];
+    let _restore = RestoreModes(
+        paths
+            .iter()
+            .chain(&files)
+            .map(|path| (path.clone(), fs::metadata(path).unwrap().permissions()))
+            .collect(),
+    );
+    for path in &paths {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    for path in &files {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stderr, b"");
+    let body = one_json_line(&output.stdout);
+    assert_eq!(body["graph"]["isolated"], false);
+    let note = body["graph"]["isolation_note"].as_str().unwrap();
+    assert_eq!(note, "unwritable corpus");
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["expand", wiki.path.to_str().unwrap(), "alpha"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("graph read without isolation: {note}\n")
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("alpha [current]")
+    );
+    assert!(!wiki.path.join(".write.lock").exists());
 }
 
 #[test]

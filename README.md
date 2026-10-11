@@ -131,7 +131,7 @@ Yams installs four commands, each with one job:
 | `yams` | Search, plus `--index`, `--projects`, `--stats`, `--gc`, `--write`, `--all` |
 | `memory-search` | Old name for `yams`; going away in the next release |
 | `yams-service` | Optional: keeps the model loaded between queries; search works without it |
-| `yams-wiki` | Sets up, checks, and writes repository memory, and maintains the catalog |
+| `yams-wiki` | Sets up, checks, and writes repository memory, expands page links, and maintains the catalog |
 
 Search matches on both exact words and meaning. When nothing scores
 well enough, Yams answers "no confident match" instead of returning
@@ -193,8 +193,30 @@ Add `--json -k 5` for machine-readable results (what agents use).
 | `yams --index` | Rebuild this project's search index |
 | `yams --stats` / `yams --projects` | Show index stats and known projects |
 | `yams-wiki check .agents/memory` | Check the memory pages for problems |
+| `yams-wiki expand .agents/memory SLUG --json` | Follow a page's outgoing links and backlinks |
 | `yams-wiki catalog .agents/memory` | Regenerate the `INDEX.md` catalog |
 | `yams-wiki capabilities --json` | Machine-readable interface versions |
+
+### Following related pages
+
+Once search has found a useful page, expand its immediate neighbours without
+another search query:
+
+```sh
+yams-wiki expand .agents/memory night-mode-rollout
+yams-wiki expand .agents/memory night-mode-rollout --json
+```
+
+Use the exact filename stem as the slug. Expansion returns outgoing links,
+backlinks, and unresolved targets, with each existing page's title, summary,
+relative path, status, and verification date. Results are sorted by slug and
+deduplicated; self-links are omitted. Expansion stops after one hop, uses the
+same link rules as the wiki checker, and needs no model or search index.
+Pages and the catalog are never modified; the shared reader may create the
+wiki's lock file.
+
+See [the graph contract](docs/graph.md) for JSON fields, failure handling, and
+snapshot semantics.
 
 ## The memory format
 
@@ -260,7 +282,7 @@ outside the supported format; `catalog --check` reports whether
 `INDEX.md` is out of date; `write` takes one JSON request on stdin and
 saves the page safely. `capabilities --json` reports the interface
 versions (`search_results`, `repository_layout`, `init_manifest`,
-`wiki_maintenance`) that adapters and the skills check against.
+`wiki_maintenance`, `graph_expansion`) that adapters and the skills check against.
 
 ## Development
 

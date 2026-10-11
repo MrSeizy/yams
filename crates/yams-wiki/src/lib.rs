@@ -3,6 +3,7 @@
 mod capabilities;
 mod check;
 mod durable;
+mod graph;
 mod index;
 mod init;
 mod lock;
@@ -18,6 +19,7 @@ pub use durable::{
     CanonicalDigest, DurableError, ReindexOptions, ReindexResult, canonical_index_digest,
     reindex_wiki,
 };
+pub use graph::{GraphError, GraphExpansion, GraphPage, expand_snapshot, expand_wiki};
 pub use index::{
     BEGIN_MARKER, END_MARKER, IndexCheck, IndexError, IndexPage, adopt_legacy, check_index,
     parse_index_page, rebuild_index,

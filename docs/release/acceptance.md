@@ -65,6 +65,7 @@ after any formula change. Use only fictional, run-owned test data.
        ("repository_layout", 1),
        ("init_manifest", 3),
        ("wiki_maintenance", 2),
+       ("graph_expansion", 1),
    ):
        value = contracts.get(key)
        if type(value) is not int or value != expected_value:
@@ -73,7 +74,8 @@ after any formula change. Use only fictional, run-owned test data.
    ```
 
    These checks bind both version surfaces to the candidate and retain the
-   `"repository_layout":1`, `"init_manifest":3`, and `"wiki_maintenance":2`
+   `"repository_layout":1`, `"init_manifest":3`, `"wiki_maintenance":2`, and
+   `"graph_expansion":1`
    contract checks.
 3. Locks directory is not installed: the binaries provision
    `~/Library/Caches/yams/rust-v1/locks` themselves on first model
