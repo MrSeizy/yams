@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-10
+
+Restore searches of existing indexes after upgrading
+([full release notes](docs/release/notes/v0.2.1.md)).
+
 ### Fixed
 
 - Searching an existing v0.1.0 (schema v2) index no longer fails with
@@ -84,6 +89,7 @@ First public release ([full release notes](docs/release/notes/v0.1.0.md)).
   macOS 14+ on Apple Silicon, with a tarball, `SHA256SUMS`, and a
   CycloneDX SBOM attached to the release.
 
-[Unreleased]: https://github.com/MrSeizy/yams/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/MrSeizy/yams/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/MrSeizy/yams/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MrSeizy/yams/releases/tag/v0.2.0
 [0.1.0]: https://github.com/PonchoPig/yams/releases/tag/v0.1.0
