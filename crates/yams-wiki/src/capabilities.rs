@@ -15,6 +15,8 @@ pub struct CapabilityContracts {
     pub wiki_maintenance: u32,
     /// One-hop `yams-wiki expand` JSON graph contract.
     pub graph_expansion: u32,
+    /// Explicit historical replacements in writes and retrieval.
+    pub supersession: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -34,6 +36,7 @@ pub const fn capabilities() -> Capabilities {
             init_manifest: 3,
             wiki_maintenance: 2,
             graph_expansion: 1,
+            supersession: 1,
         },
     }
 }
@@ -55,6 +58,7 @@ mod tests {
                     init_manifest: 3,
                     wiki_maintenance: 2,
                     graph_expansion: 1,
+                    supersession: 1,
                 },
             }
         );

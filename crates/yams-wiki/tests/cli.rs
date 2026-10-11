@@ -125,14 +125,15 @@ fn capabilities_are_one_stable_json_line() {
                 "repository_layout": 1,
                 "init_manifest": 3,
                 "wiki_maintenance": 2,
-                "graph_expansion": 1
+                "graph_expansion": 1,
+                "supersession": 1
             }
         })
     );
 
     let version = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap();
     let expected = format!(
-        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":3,\"wiki_maintenance\":2,\"graph_expansion\":1}}}}\n"
+        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":3,\"wiki_maintenance\":2,\"graph_expansion\":1,\"supersession\":1}}}}\n"
     );
     assert_eq!(output.stdout, expected.as_bytes());
 }
@@ -669,4 +670,38 @@ fn compat_reports_violations_and_a_clean_wiki_passes() {
     assert!(!dirty.status.success());
     let stderr = String::from_utf8(dirty.stderr).unwrap();
     assert!(stderr.contains("embed"), "{stderr}");
+}
+
+#[test]
+fn supersede_command_writes_json_preserves_old_body_and_never_loads_a_store() {
+    let wiki = Wiki::canonical();
+    fs::write(
+        wiki.path.join("pages/beta.md"),
+        PAGE.replace("slug: alpha", "slug: beta"),
+    )
+    .unwrap();
+    yams_wiki::reindex_wiki(&wiki.path, &yams_wiki::ReindexOptions::default()).unwrap();
+    let state = wiki.path.join("unused-state");
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args([
+            "supersede",
+            wiki.path.to_str().unwrap(),
+            "alpha",
+            "--by",
+            "beta",
+        ])
+        .env("YAMS_HOME", &state)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert!(output.stderr.is_empty());
+    assert_eq!(one_json_line(&output.stdout)["ok"], true);
+    let old = fs::read_to_string(wiki.path.join("pages/alpha.md")).unwrap();
+    assert!(old.contains("A fictional beacon needs violet mode."));
+    assert!(old.contains("**Superseded by:** [[beta]]"));
+    assert_eq!(
+        yams_wiki::parse_wiki_page(&old).unwrap().status,
+        yams_wiki::Status::Historical
+    );
+    assert!(!state.exists());
 }

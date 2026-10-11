@@ -11,12 +11,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `yams-wiki supersede WIKI_ROOT SLUG --by REPLACEMENT` preserves old evidence,
+  marks it historical, and records an explicit replacement without changing the
+  eight-field frontmatter format. The JSON writer supports the same operation.
+- Retrieval follows historical replacement chains, promotes the current page
+  even at `-k 1`, and reports `supersedes` / `superseded_by` provenance. Existing
+  similarity scores and relevance gates remain tied to their original evidence.
+- Wiki checks diagnose invalid replacement declarations, missing targets and
+  cycles. Capability `supersession: 1` advertises the new behavior.
 - `yams-wiki expand WIKI_ROOT SLUG [--json]`: retrieve a page's immediate
   outgoing links, backlinks, and unresolved targets without a model or
   search index. Results carry page summaries, paths, lifecycle status,
   and verification dates; unsafe or malformed pages fail explicitly.
 - Capability contract `graph_expansion: 1` for the graph response and
   classified failure envelope.
+
+### Changed
+
+- Project store schema v3 adds replacement metadata. Exact v1/v2 stores migrate
+  transactionally; the next index pass backfills links without re-embedding
+  unchanged pages from a compatible v2 store.
+- Original v1 schema documentation remains recognizable; updating it uses the
+  existing inspect/plan/apply manifest flow. Shared pages with a noncanonical
+  `**Superseded by:**` line need that line repaired before indexing; private and
+  override Markdown only opts in through a valid historical declaration.
 
 ## [0.1.0] — 2026-08-17
 

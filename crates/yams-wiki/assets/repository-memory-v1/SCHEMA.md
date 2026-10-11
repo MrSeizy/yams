@@ -103,7 +103,15 @@ Run the same write command for an update. `expected_sha256` is optional; when pr
 
 Record only knowledge that is verified, durable, and reusable. Verify consequential claims against current code, tests, documentation, or Git history. Never store secrets, transcripts, speculation, or temporary task progress.
 
-Update an existing page instead of creating a duplicate. When a fact is superseded, mark it `historical` and add a forward link to the replacement rather than deleting it.
+Update an existing page instead of creating a duplicate. When evidence replaces a fact, first write and verify the current replacement page, then run:
+
+```sh
+yams-wiki supersede .agents/memory old-slug --by replacement-slug
+```
+
+This preserves the old body, marks the page `historical`, and appends a standalone `**Superseded by:** [[replacement-slug]]` declaration. The eight frontmatter fields remain unchanged. Ordinary updates retain this declaration; they cannot retarget it. The equivalent write payload is `{"supersede":true,"target":"old-slug","replacement":"replacement-slug"}`; an optional `expected_sha256` protects against stale reads. Never use this declaration on a current page or point it to itself. Code-fenced and indented examples do not declare replacements.
+
+After `yams --index`, search follows replacement chains within the same directory and corpus. A matching historical page brings its current replacement first, with provenance and the replacement's own score. Older pages remain available as history when the result limit permits. Missing replacements or cycles leave the historical match visible; `yams-wiki check` reports the broken chain. Ordinary related links and historical status alone do not declare a replacement.
 
 Do not cite source line numbers outside fenced code or URLs because they drift. Name the durable symbol, command, test, document, or commit instead.
 

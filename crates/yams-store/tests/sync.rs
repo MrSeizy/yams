@@ -1553,3 +1553,155 @@ fn full_rebuild_refuses_any_incomplete_scan_before_mutation() {
     assert!(notes[0].path < notes[1].path);
     assert_eq!(project_state(&fixture.home, &fixture.root), before);
 }
+
+#[test]
+fn supersession_metadata_backfills_v2_without_embedding_and_tracks_removal() {
+    let fixture = Fixture::new(&[
+        ("old.md", "Historical evidence."),
+        ("new.md", "Corrected evidence."),
+    ]);
+    let old = "---\ntitle: Old\nstatus: historical\n---\n\nHistorical evidence.\n\n**Superseded by:** [[new]]\n";
+    std::fs::write(fixture.page_path("old.md"), old).unwrap();
+    let mut embedder = RecordingFake::default();
+    synchronize(
+        &fixture.home,
+        &fixture.root,
+        &fixture.scan(),
+        &mut embedder,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    let batches = embedder.batches.len();
+    let connection = open_project(&fixture.home, &fixture.root).unwrap();
+    let before = yams_store::read_embedding_scheme(&connection).unwrap();
+    connection
+        .execute_batch("DROP TABLE supersessions; UPDATE metadata SET schema_version = 2;")
+        .unwrap();
+    drop(connection);
+    let report = synchronize(
+        &fixture.home,
+        &fixture.root,
+        &fixture.scan(),
+        &mut embedder,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    assert_eq!(report.embedded, 0);
+    assert_eq!(embedder.batches.len(), batches);
+    let connection = open_project(&fixture.home, &fixture.root).unwrap();
+    assert_eq!(
+        yams_store::read_embedding_scheme(&connection).unwrap(),
+        before
+    );
+    let snapshot = yams_store::RetrievalSnapshot::begin(&connection).unwrap();
+    let pages = snapshot.page_metadata().unwrap();
+    assert_eq!(
+        pages
+            .iter()
+            .find(|page| page.id().as_str().ends_with("/old.md"))
+            .unwrap()
+            .superseded_by(),
+        Some("new")
+    );
+    drop(snapshot);
+    drop(connection);
+    std::fs::write(
+        fixture.page_path("old.md"),
+        old.replace("**Superseded by:** [[new]]", "Replacement withdrawn."),
+    )
+    .unwrap();
+    synchronize(
+        &fixture.home,
+        &fixture.root,
+        &fixture.scan(),
+        &mut embedder,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    let connection = open_project(&fixture.home, &fixture.root).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM supersessions", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn malformed_supersession_cannot_publish_partial_index_state() {
+    let fixture = Fixture::new(&[("old.md", "Original evidence.")]);
+    let mut embedder = RecordingFake::default();
+    synchronize(
+        &fixture.home,
+        &fixture.root,
+        &fixture.scan(),
+        &mut embedder,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    let hashes = indexed_hashes(&fixture.home, &fixture.root);
+    for source in [
+        "---\nstatus: historical\n---\n**Superseded by:** [[../escape]]\n",
+        "---\nstatus: current\n---\n**Superseded by:** [[new]]\n",
+        "---\nstatus: historical\n---\n**Superseded by:** [[old]]\n",
+    ] {
+        std::fs::write(fixture.page_path("old.md"), source).unwrap();
+        assert!(matches!(
+            synchronize(
+                &fixture.home,
+                &fixture.root,
+                &fixture.scan(),
+                &mut embedder,
+                SyncMode::Incremental
+            ),
+            Err(SyncError::InvalidSupersession { .. })
+        ));
+        assert_eq!(indexed_hashes(&fixture.home, &fixture.root), hashes);
+    }
+}
+
+#[test]
+fn private_and_override_markdown_only_opts_into_unambiguous_historical_replacements() {
+    for kind in [CorpusKind::Private, CorpusKind::Override] {
+        let fixture = Fixture::new(&[("shared.md", "Shared evidence.")]);
+        let other = fixture.root.join("other-corpus");
+        std::fs::create_dir(&other).unwrap();
+        let other_corpus = Corpus::validated(&other, kind).unwrap();
+        let corpora = [fixture.corpus.clone(), other_corpus];
+        for (source, expected) in [
+            ("Plain notes.\n**Superseded by:** [[Newer Note]]", None),
+            ("Plain notes.\n**Superseded by:** [[new]]", None),
+            (
+                "---\nstatus: historical\n---\n**Superseded by:** [[old]]",
+                None,
+            ),
+            (
+                "---\nstatus: historical\n---\n**Superseded by:** [[new]]",
+                Some("new"),
+            ),
+        ] {
+            std::fs::write(other.join("old.md"), source).unwrap();
+            synchronize(
+                &fixture.home,
+                &fixture.root,
+                &scan_corpora(&corpora),
+                &mut RecordingFake::default(),
+                SyncMode::Incremental,
+            )
+            .unwrap();
+            let connection = open_project(&fixture.home, &fixture.root).unwrap();
+            let snapshot = yams_store::RetrievalSnapshot::begin(&connection).unwrap();
+            let pages = snapshot.page_metadata().unwrap();
+            assert_eq!(pages.len(), 2);
+            assert_eq!(
+                pages
+                    .iter()
+                    .find(|page| page.id().as_str().ends_with("/old.md"))
+                    .unwrap()
+                    .superseded_by(),
+                expected
+            );
+        }
+    }
+}

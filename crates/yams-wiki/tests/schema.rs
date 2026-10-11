@@ -1343,3 +1343,32 @@ fn obsidian_added_frontmatter_keys_remain_a_hard_rejection() {
         "page has unknown frontmatter key: tags"
     );
 }
+
+#[test]
+fn updates_still_repair_metadata_without_discarding_supersession() {
+    let current = render_create(&create_request(), "2026-08-07").unwrap();
+    for broken in [
+        current.replace("verified: 2026-08-07", "verified: yesterday"),
+        current.replace("verified: 2026-08-07", "verified: 2026-08-01"),
+        current.replace("summary: fictional jobs require blue mode", "summary: "),
+        current.replace("type: gotcha", "type: invalid"),
+    ] {
+        for historical in [false, true] {
+            let source = if historical {
+                format!(
+                    "{}\n**Superseded by:** [[replacement]]\n",
+                    broken.replace("status: current", "status: historical")
+                )
+            } else {
+                broken.clone()
+            };
+            let rendered = render_update(&update_request(), &source, "2026-08-09").unwrap();
+            let parsed = parse_wiki_page(&rendered.page).unwrap();
+            assert_eq!(parsed.verified, "2026-08-09");
+            assert_eq!(
+                parsed.superseded_by.as_deref(),
+                historical.then_some("replacement")
+            );
+        }
+    }
+}

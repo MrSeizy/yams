@@ -26,6 +26,8 @@ pub struct SearchHit {
     pub corpus: CorpusKind,
     pub exact: bool,
     pub status: Option<String>,
+    pub superseded_by: Option<String>,
+    pub supersedes: Vec<String>,
     pub explanation: Option<HitExplanation>,
 }
 
@@ -463,6 +465,20 @@ fn render_text_inner(
             writeln!(output, "{indent}  {path}")?;
         }
 
+        if let Some(replacement) = &hit.superseded_by {
+            writeln!(
+                output,
+                "{indent}  Superseded by: {}",
+                sanitize_terminal(replacement, TerminalText::Inline)
+            )?;
+        }
+        for previous in &hit.supersedes {
+            writeln!(
+                output,
+                "{indent}  Replaces matched historical page: {}",
+                sanitize_terminal(previous, TerminalText::Inline)
+            )?;
+        }
         if options.full {
             let body = sanitize_terminal(&hit.text, TerminalText::Multiline);
             push_indented_multiline(output, &indent, &body)?;
@@ -747,6 +763,18 @@ fn hit_json(
     object.insert("exact".to_owned(), hit.exact.into());
     if let Some(status) = &hit.status {
         object.insert("status".to_owned(), Value::String(status.clone()));
+    }
+    if let Some(replacement) = &hit.superseded_by {
+        object.insert(
+            "superseded_by".to_owned(),
+            Value::String(replacement.clone()),
+        );
+    }
+    if !hit.supersedes.is_empty() {
+        object.insert(
+            "supersedes".to_owned(),
+            Value::Array(hit.supersedes.iter().cloned().map(Value::String).collect()),
+        );
     }
     if let Some(project) = project {
         object.insert("project".to_owned(), Value::String(project.to_owned()));

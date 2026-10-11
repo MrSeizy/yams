@@ -169,7 +169,7 @@ fn insert_doc_and_chunk(connection: &Connection, fts_text: Option<&str>) {
 fn downgrade_project_to_exact_v1(connection: &Connection) {
     connection
         .execute_batch(
-            "DROP TABLE embedding_scheme; \
+            "DROP TABLE supersessions; DROP TABLE embedding_scheme; \
              UPDATE metadata SET schema_version = 1 WHERE singleton = 1;",
         )
         .unwrap();
@@ -344,7 +344,7 @@ fn a_new_project_store_has_the_constrained_v2_embedding_scheme_stamp() {
     let root = create_project(tmp.path(), "project");
     let connection = open_project(&home, &root).unwrap();
 
-    assert_eq!(SCHEMA_VERSION, 2);
+    assert_eq!(SCHEMA_VERSION, 3);
     let rows: i64 = connection
         .query_row("SELECT count(*) FROM embedding_scheme", [], |row| {
             row.get(0)
@@ -534,7 +534,7 @@ fn embedding_scheme_api_sets_clears_and_rolls_back_with_the_caller_transaction()
 }
 
 #[test]
-fn an_exact_v1_project_migrates_atomically_to_unstamped_v2_and_reopens() {
+fn an_exact_v1_project_migrates_atomically_to_unstamped_v3_and_reopens() {
     let tmp = tempdir().unwrap();
     let home = StoreHome::new(tmp.path().join("state"));
     let root = create_project(tmp.path(), "project");
@@ -555,7 +555,7 @@ fn an_exact_v1_project_migrates_atomically_to_unstamped_v2_and_reopens() {
     let chunks: i64 = migrated
         .query_row("SELECT count(*) FROM chunks", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, SCHEMA_VERSION);
     assert_eq!(chunks, 1);
     assert_eq!(read_embedding_scheme(&migrated).unwrap(), None);
     assert_eq!(integrity(&migrated), "ok");

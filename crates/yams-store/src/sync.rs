@@ -55,6 +55,7 @@ pub struct PageUpsert {
     path: String,
     corpus: &'static str,
     status: Option<String>,
+    superseded_by: Option<String>,
     byte_length: i64,
     modified_ns: i64,
     device: i64,
@@ -163,6 +164,9 @@ pub enum SyncError {
 
     #[error(transparent)]
     Chunk(#[from] ChunkError),
+
+    #[error("invalid supersession declaration in {path}: {reason}")]
+    InvalidSupersession { path: PathBuf, reason: String },
 
     #[error("scanned page is not valid UTF-8: {path}")]
     InvalidUtf8 { path: PathBuf },
@@ -298,6 +302,7 @@ impl SyncError {
 struct ExistingDoc {
     corpus: String,
     status: Option<String>,
+    superseded_by: Option<String>,
     content_hash: String,
     byte_length: i64,
     modified_ns: i64,
@@ -307,7 +312,8 @@ struct ExistingDoc {
 
 impl ExistingDoc {
     fn metadata_matches(&self, page: &ScannedPage) -> Result<bool, SyncError> {
-        Ok(self.corpus == corpus_label(page.corpus)
+        Ok(self.superseded_by == page_supersession(page)?
+            && self.corpus == corpus_label(page.corpus)
             && self.content_hash == page.sha256
             && self.byte_length == sqlite_integer(page.byte_len, page, "byte length")?
             && self.modified_ns
@@ -958,6 +964,41 @@ fn positively_absent(path: &Path, scan: &ScanReport) -> bool {
             .any(|root| path.starts_with(root))
 }
 
+fn page_supersession(page: &ScannedPage) -> Result<Option<String>, SyncError> {
+    let source = std::str::from_utf8(page.content_bytes()).map_err(|_| SyncError::InvalidUtf8 {
+        path: page.path.clone(),
+    })?;
+    let parsed = parse_frontmatter(source);
+    let invalid = |reason: String| SyncError::InvalidSupersession {
+        path: page.path.clone(),
+        reason,
+    };
+    // Private/override corpora can contain arbitrary Markdown rather than the
+    // wiki schema. Only an unambiguous historical declaration opts them in;
+    // invalid metadata there must not block indexing the shared wiki.
+    let replacement = match yams_core::superseded_by(&parsed.body) {
+        Ok(replacement) => replacement,
+        Err(_) if page.corpus != CorpusKind::Shared => return Ok(None),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
+    if let Some(replacement) = &replacement {
+        let historical = parsed.fields.get("status").map(String::as_str) == Some("historical");
+        let self_link = page.path.file_stem().and_then(|value| value.to_str()) == Some(replacement);
+        if (!historical || self_link) && page.corpus != CorpusKind::Shared {
+            return Ok(None);
+        }
+        if !historical {
+            return Err(invalid(
+                "only historical pages may declare a replacement".into(),
+            ));
+        }
+        if self_link {
+            return Err(invalid("a page cannot supersede itself".into()));
+        }
+    }
+    Ok(replacement)
+}
+
 fn plan_page(page: &ScannedPage) -> Result<PageUpsert, SyncError> {
     let source = std::str::from_utf8(page.content_bytes()).map_err(|_| SyncError::InvalidUtf8 {
         path: page.path.clone(),
@@ -993,6 +1034,7 @@ fn page_upsert(
         source: page.clone(),
         path,
         corpus: corpus_label(page.corpus),
+        superseded_by: page_supersession(page)?,
         status,
         byte_length: sqlite_integer(page.byte_len, page, "byte length")?,
         modified_ns: i64::try_from(page.modified_ns).map_err(|_| {
@@ -1084,7 +1126,8 @@ fn read_existing_docs(
 ) -> Result<BTreeMap<PathBuf, ExistingDoc>, SyncError> {
     let mut statement = connection
         .prepare(
-            "SELECT path, corpus, status, content_hash, byte_length, mtime_ns, device, inode \
+            "SELECT path, corpus, status, content_hash, byte_length, mtime_ns, device, inode, \
+             (SELECT replacement FROM supersessions WHERE supersessions.path = docs.path) \
              FROM docs ORDER BY path",
         )
         .map_err(|source| {
@@ -1102,6 +1145,7 @@ fn read_existing_docs(
                     modified_ns: row.get(5)?,
                     device: row.get(6)?,
                     inode: row.get(7)?,
+                    superseded_by: row.get(8)?,
                 },
             ))
         })
@@ -1208,6 +1252,7 @@ fn upsert_page(
             generation,
         ],
     )?;
+    update_supersession(transaction, planned)?;
     for chunk in &page.chunks {
         transaction.execute(
             "INSERT INTO chunks(path, ordinal, text, embed_text, vector_hash) \
@@ -1224,6 +1269,20 @@ fn upsert_page(
         transaction.execute(
             "INSERT INTO chunks_fts(rowid, text) VALUES (?1, ?2)",
             params![rowid, chunk.text],
+        )?;
+    }
+    Ok(())
+}
+
+fn update_supersession(
+    transaction: &Transaction<'_>,
+    page: &PageUpsert,
+) -> Result<(), rusqlite::Error> {
+    transaction.execute("DELETE FROM supersessions WHERE path = ?1", [&page.path])?;
+    if let Some(replacement) = &page.superseded_by {
+        transaction.execute(
+            "INSERT INTO supersessions(path, replacement) VALUES (?1, ?2)",
+            params![page.path, replacement],
         )?;
     }
     Ok(())
@@ -1249,7 +1308,7 @@ fn update_page_metadata(
             generation,
         ],
     )?;
-    Ok(())
+    update_supersession(transaction, page)
 }
 
 fn delete_page(transaction: &Transaction<'_>, path: &Path) -> Result<(), rusqlite::Error> {
@@ -1327,6 +1386,13 @@ fn plan_seal(
             Some(status) => {
                 digest.update([1]);
                 hash_plan_field(&mut digest, status.as_bytes());
+            }
+            None => digest.update([0]),
+        }
+        match &page.superseded_by {
+            Some(replacement) => {
+                digest.update([1]);
+                hash_plan_field(&mut digest, replacement.as_bytes());
             }
             None => digest.update([0]),
         }

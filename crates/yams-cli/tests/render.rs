@@ -17,6 +17,8 @@ fn hit() -> SearchHit {
         corpus: CorpusKind::Shared,
         exact: false,
         status: None,
+        superseded_by: None,
+        supersedes: Vec::new(),
         explanation: None,
     }
 }
@@ -648,4 +650,26 @@ fn render_error_display_redacts_the_untrusted_hit_path() {
     );
     assert_no_literal_terminal_controls(&display);
     assert!(!display.contains("PRIVATE_ERROR_PATH_SENTINEL"));
+}
+
+#[test]
+fn supersession_provenance_is_explicit_in_json_and_sanitized_in_text() {
+    let mut historical = hit();
+    historical.status = Some("historical".into());
+    historical.superseded_by = Some("/fictional/new\u{1b}[2J.md".into());
+    let mut replacement = hit();
+    replacement.supersedes = vec!["/fictional/old\nforged.md".into()];
+    let response = SearchResponse {
+        hits: vec![replacement, historical],
+        explanation: None,
+    };
+    let encoded = render_json(&response).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(json[0]["supersedes"][0], "/fictional/old\nforged.md");
+    assert_eq!(json[1]["superseded_by"], "/fictional/new\u{1b}[2J.md");
+    let text = render_text(&response, TextOptions::single(false, Styling::Plain)).unwrap();
+    assert_no_literal_terminal_controls(&text);
+    assert!(text.contains("Replaces matched historical page:"));
+    assert!(text.contains("Superseded by:"));
+    assert!(!text.contains("\nforged.md"));
 }

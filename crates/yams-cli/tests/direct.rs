@@ -518,3 +518,60 @@ fn search_succeeds_once_a_vector_journal_sidecar_clears() {
         assert_eq!(body.as_array().unwrap().len(), 1);
     });
 }
+
+#[test]
+fn direct_and_all_search_follow_supersession_at_limit_one_with_explanations() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let corpus_path = project.join(".agents/memory/pages");
+    fs::create_dir_all(&corpus_path).unwrap();
+    fs::write(corpus_path.join("alpha.md"), "---\ntitle: Old\nstatus: historical\n---\n\nobsolete_identifier evidence\n\n**Superseded by:** [[beta]]\n").unwrap();
+    fs::write(
+        corpus_path.join("beta.md"),
+        "---\ntitle: Corrected\nstatus: current\n---\n\nUse the corrected behavior.\n",
+    )
+    .unwrap();
+    let state = temporary.path().join("state");
+    let home = StoreHome::new(&state);
+    let corpus = Corpus::validated(&corpus_path, CorpusKind::Shared).unwrap();
+    synchronize(
+        &home,
+        &project,
+        &scan_corpora(&[corpus]),
+        &mut UnitEmbed,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+    for args in [
+        vec![
+            "yams",
+            "--json",
+            "--explain",
+            "-k",
+            "1",
+            "obsolete_identifier",
+        ],
+        vec!["yams", "--json", "--all", "-k", "1", "obsolete_identifier"],
+    ] {
+        let all = args.contains(&"--all");
+        let completion = execute_direct_with_embedder(
+            args,
+            [(OsString::from("YAMS_HOME"), state.clone().into_os_string())],
+            &inputs(&project),
+            &[],
+            &when(),
+            &mut UnitEmbed,
+        );
+        assert_eq!(completion.exit_code, ExitCode::Ok, "{}", completion.stderr);
+        let json: serde_json::Value = serde_json::from_str(&completion.stdout).unwrap();
+        let hits = if all { &json } else { &json["hits"] };
+        assert_eq!(hits[0]["name"], "Corrected", "{json}");
+        assert_eq!(hits[0]["exact"], false);
+        assert!(
+            hits[0]["supersedes"][0]
+                .as_str()
+                .unwrap()
+                .ends_with("/alpha.md")
+        );
+    }
+}

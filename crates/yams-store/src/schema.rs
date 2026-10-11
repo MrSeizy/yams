@@ -10,7 +10,7 @@ use crate::secure::{
     DatabaseState, NoHooks, OpenHooks, SecureStoreDirectory, appended_name, immutable_uri,
 };
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub(crate) const MIGRATABLE_SCHEMA_VERSION: u32 = 1;
 
 const METADATA_SCHEMA: &str = r#"
@@ -75,6 +75,13 @@ CREATE TABLE embedding_scheme (
 ) STRICT
 "#;
 
+const SUPERSESSION_SCHEMA: &str = r#"
+CREATE TABLE supersessions (
+    path TEXT PRIMARY KEY NOT NULL REFERENCES docs(path) ON DELETE CASCADE,
+    replacement TEXT NOT NULL CHECK (length(replacement) BETWEEN 1 AND 64 AND replacement NOT GLOB '*[^a-z0-9-]*')
+) STRICT
+"#;
+
 const VECTOR_SCHEMA: &str = r#"
 CREATE TABLE vectors (
     hash            TEXT PRIMARY KEY NOT NULL,
@@ -105,9 +112,14 @@ pub(crate) fn create_project_schema(
 }
 
 fn create_project_objects(connection: &Connection) -> Result<(), rusqlite::Error> {
-    create_project_v1_objects(connection)?;
-    connection.execute_batch(EMBEDDING_SCHEME_SCHEMA)?;
+    create_project_v2_objects(connection)?;
+    connection.execute_batch(SUPERSESSION_SCHEMA)?;
     Ok(())
+}
+
+fn create_project_v2_objects(connection: &Connection) -> Result<(), rusqlite::Error> {
+    create_project_v1_objects(connection)?;
+    connection.execute_batch(EMBEDDING_SCHEME_SCHEMA)
 }
 
 fn create_project_v1_objects(connection: &Connection) -> Result<(), rusqlite::Error> {
@@ -134,22 +146,31 @@ pub(crate) fn project_schema_matches_version(
     let reference = Connection::open_in_memory()?;
     match version {
         MIGRATABLE_SCHEMA_VERSION => create_project_v1_objects(&reference)?,
+        2 => create_project_v2_objects(&reference)?,
         SCHEMA_VERSION => create_project_objects(&reference)?,
         _ => return Ok(false),
     }
     Ok(schema_objects(connection)? == schema_objects(&reference)?)
 }
 
-pub(crate) fn migrate_project_schema_v1_to_v2_with_hook(
+pub(crate) fn migrate_project_schema_with_hook(
     transaction: &Transaction<'_>,
     after_table_creation: impl FnOnce() -> Result<(), rusqlite::Error>,
 ) -> Result<(), rusqlite::Error> {
-    transaction.execute_batch(EMBEDDING_SCHEME_SCHEMA)?;
+    let version: u32 = transaction.query_row(
+        "SELECT schema_version FROM metadata WHERE singleton = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if version == 1 {
+        transaction.execute_batch(EMBEDDING_SCHEME_SCHEMA)?;
+    }
+    transaction.execute_batch(SUPERSESSION_SCHEMA)?;
     after_table_creation()?;
     let updated = transaction.execute(
         "UPDATE metadata SET schema_version = ?1 \
          WHERE singleton = 1 AND schema_version = ?2",
-        params![SCHEMA_VERSION, MIGRATABLE_SCHEMA_VERSION],
+        params![SCHEMA_VERSION, version],
     )?;
     if updated != 1 {
         return Err(rusqlite::Error::QueryReturnedNoRows);
@@ -523,9 +544,8 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        MIGRATABLE_SCHEMA_VERSION, OpenHooks, StoreError, StoreHome, create_project_v1_objects,
-        migrate_project_schema_v1_to_v2_with_hook, open_vectors_with_hooks,
-        project_schema_matches_version,
+        OpenHooks, StoreError, StoreHome, create_project_v1_objects, create_project_v2_objects,
+        migrate_project_schema_with_hook, open_vectors_with_hooks, project_schema_matches_version,
     };
 
     struct ReplaceAfterSqliteOpen {
@@ -588,45 +608,39 @@ mod tests {
     }
 
     #[test]
-    fn project_v1_migration_rolls_back_table_creation_when_version_update_cannot_start() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        create_project_v1_objects(&connection).unwrap();
-        connection
-            .execute(
+    fn project_migrations_roll_back_table_creation_when_version_update_cannot_start() {
+        for original_version in [1, 2] {
+            let mut connection = Connection::open_in_memory().unwrap();
+            if original_version == 1 {
+                create_project_v1_objects(&connection).unwrap();
+            } else {
+                create_project_v2_objects(&connection).unwrap();
+            }
+            connection.execute(
                 "INSERT INTO metadata(singleton, schema_version, root) VALUES (1, ?1, '/project')",
-                [MIGRATABLE_SCHEMA_VERSION],
-            )
-            .unwrap();
-
-        {
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
+                [original_version],
+            ).unwrap();
+            {
+                let transaction = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .unwrap();
+                let error = migrate_project_schema_with_hook(&transaction, || {
+                    Err(rusqlite::Error::InvalidQuery)
+                })
+                .unwrap_err();
+                assert!(matches!(error, rusqlite::Error::InvalidQuery));
+                transaction.rollback().unwrap();
+            }
+            let version: u32 = connection
+                .query_row(
+                    "SELECT schema_version FROM metadata WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
                 .unwrap();
-            let error = migrate_project_schema_v1_to_v2_with_hook(&transaction, || {
-                Err(rusqlite::Error::InvalidQuery)
-            })
-            .unwrap_err();
-            assert!(matches!(error, rusqlite::Error::InvalidQuery));
-            transaction.rollback().unwrap();
+            assert_eq!(version, original_version);
+            assert!(project_schema_matches_version(&connection, original_version).unwrap());
         }
-
-        let version: u32 = connection
-            .query_row(
-                "SELECT schema_version FROM metadata WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let embedding_scheme_exists: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'embedding_scheme')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(version, MIGRATABLE_SCHEMA_VERSION);
-        assert!(!embedding_scheme_exists);
-        assert!(project_schema_matches_version(&connection, MIGRATABLE_SCHEMA_VERSION).unwrap());
     }
 
     #[test]

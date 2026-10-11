@@ -79,7 +79,8 @@ impl<'project> RetrievalSnapshot<'project> {
                 "SELECT path, corpus, status, \
                  (SELECT embed_text FROM chunks \
                   WHERE chunks.path = docs.path \
-                  ORDER BY ordinal, id LIMIT 1) \
+                  ORDER BY ordinal, id LIMIT 1), \
+                 (SELECT replacement FROM supersessions WHERE supersessions.path = docs.path) \
                  FROM docs ORDER BY path",
             )
             .map_err(|source| RetrievalError::Database {
@@ -93,6 +94,7 @@ impl<'project> RetrievalSnapshot<'project> {
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })
             .map_err(|source| RetrievalError::Database {
@@ -101,7 +103,7 @@ impl<'project> RetrievalSnapshot<'project> {
             })?;
         let mut pages = Vec::new();
         for row in rows {
-            let (path, corpus, status, embed_text) =
+            let (path, corpus, status, embed_text, superseded_by) =
                 row.map_err(|source| RetrievalError::Database {
                     operation: "read page metadata",
                     source,
@@ -113,11 +115,14 @@ impl<'project> RetrievalSnapshot<'project> {
                 }
             })?;
             let name = display_title(Path::new(&path), embed_text.as_deref());
-            pages.push(PageMetadata::new(
-                id,
-                name,
-                PageLabels::new(Some(&corpus), status.as_deref(), None),
-            ));
+            pages.push(
+                PageMetadata::new(
+                    id,
+                    name,
+                    PageLabels::new(Some(&corpus), status.as_deref(), None),
+                )
+                .with_superseded_by(superseded_by),
+            );
         }
         Ok(pages)
     }

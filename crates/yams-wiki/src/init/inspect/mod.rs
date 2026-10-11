@@ -1144,7 +1144,14 @@ fn validate_schema(
     if kind != NodeKind::File {
         return false;
     }
-    if bytes.is_some_and(|bytes| bytes.as_slice() == SCHEMA.as_bytes()) {
+    // The first v1 schema has the same eight-field layout. Only its lifecycle
+    // guidance predates explicit replacements. A reviewed init plan may replace
+    // these exact released bytes with the current bundled documentation.
+    const ORIGINAL_V1_SCHEMA_SHA256: &str =
+        "7390450d1cffac8b9d1dd9202de49d3e6d1682c46dbe49b929466c084bff2d1b";
+    if bytes.is_some_and(|bytes| {
+        bytes.as_slice() == SCHEMA.as_bytes() || sha256(bytes) == ORIGINAL_V1_SCHEMA_SHA256
+    }) {
         true
     } else if bytes.is_some() {
         push_conflict(

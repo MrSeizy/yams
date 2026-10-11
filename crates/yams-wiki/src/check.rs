@@ -451,6 +451,8 @@ pub fn validate_wiki(snapshot: &WikiSnapshot) -> WikiCheckReport {
 
     let mut linked_from_elsewhere = HashSet::new();
     let mut valid_pages = Vec::new();
+    let mut replacements = std::collections::BTreeMap::new();
+    let mut statuses = std::collections::BTreeMap::new();
     let line_ref = Regex::new(r"[A-Za-z0-9_./-]+\.py:\d+").expect("constant regex");
     for page in &snapshot.pages {
         let Some(name) = page.name.to_str() else {
@@ -492,6 +494,20 @@ pub fn validate_wiki(snapshot: &WikiSnapshot) -> WikiCheckReport {
             continue;
         }
         let fields = &parsed.fields;
+        statuses.insert(slug.to_owned(), fields.get("status").cloned());
+        match yams_core::superseded_by(&parsed.body) {
+            Err(error) => failures.push(format!("pages/{name}: {error}")),
+            Ok(Some(replacement)) => {
+                if fields.get("status").map(String::as_str) != Some("historical")
+                    || replacement == slug
+                {
+                    failures.push(format!("pages/{name}: a replacement requires historical status and a different slug"));
+                }
+                replacements.insert(slug.to_owned(), replacement);
+            }
+            Ok(None) => {}
+        }
+
         if fields.get("slug").map(String::as_str) != Some(slug) {
             let declared = fields.get("slug").map_or("(missing)", String::as_str);
             failures.push(format!(
@@ -586,6 +602,25 @@ pub fn validate_wiki(snapshot: &WikiSnapshot) -> WikiCheckReport {
         valid_pages.push((name.to_owned(), fields.clone()));
     }
 
+    for slug in replacements.keys() {
+        let mut seen = BTreeSet::new();
+        let mut current = slug;
+        let mut cycle = false;
+        while let Some(next) = replacements.get(current) {
+            if !seen.insert(current) {
+                cycle = true;
+                break;
+            }
+            current = next;
+        }
+        if cycle {
+            failures.push(format!(
+                "pages/{slug}.md: replacement chain contains a cycle"
+            ));
+        } else if statuses.get(current).and_then(|status| status.as_deref()) != Some("current") {
+            failures.push(format!("pages/{slug}.md: replacement chain does not lead to an existing current page ({current})"));
+        }
+    }
     if page_files.len() > 1 {
         for name in &page_files {
             if let Some(slug) = name.strip_suffix(".md")

@@ -17,7 +17,8 @@ use crate::ReindexOptions;
 use crate::durable::{DurableError, canonical_digest_locked, reindex_locked};
 use crate::lock::{LockError, LockGuard, LockLease, LockMode, acquire_lock};
 use crate::schema::{
-    CreateRequest, UpdateRequest, render_create, render_update, validate_today_input,
+    CreateRequest, SupersedeRequest, UpdateRequest, parse_wiki_page, render_create,
+    render_supersede, render_update, validate_supersede_request, validate_today_input,
     validate_update_request,
 };
 
@@ -154,6 +155,7 @@ enum Request {
         rendered: String,
     },
     Update(UpdateRequest),
+    Supersede(SupersedeRequest),
 }
 
 /// Parse, validate, lock, and durably write one shared-memory page.
@@ -181,7 +183,19 @@ fn write_json_with_hooks(
         return WriteResult::operational(error.to_string(), "supply a valid local date");
     }
 
-    let request = if routes_to_update(object) {
+    let request = if object.contains_key("supersede") {
+        match serde_json::from_value::<SupersedeRequest>(value) {
+            Ok(request) => {
+                if let Err(error) = validate_supersede_request(&request) {
+                    return WriteResult::refusal(error.to_string(), "fix the request and retry");
+                }
+                Request::Supersede(request)
+            }
+            Err(error) => {
+                return WriteResult::refusal(error.to_string(), "fix the request and retry");
+            }
+        }
+    } else if routes_to_update(object) {
         match serde_json::from_value::<UpdateRequest>(value) {
             Ok(request) => {
                 if let Err(error) = validate_update_request(&request, today) {
@@ -250,6 +264,14 @@ fn write_json_with_hooks(
     };
 
     match request {
+        Request::Supersede(request) => {
+            let mut result =
+                locked_supersede(corpus, &guard, &pages, &digest, &request, today, hooks);
+            if let Some(body) = result.body.as_object_mut() {
+                body.entry("slug").or_insert_with(|| json!(request.target));
+            }
+            result
+        }
         Request::Create { request, rendered } => locked_create(
             corpus, &guard, &pages, existing, &digest, &request, &rendered, hooks,
         ),
@@ -426,6 +448,96 @@ fn locked_update(
         Err(error) => WriteResult::operational(
             error.describe(&slug),
             "make the memory directory writable and retry",
+        ),
+    }
+}
+
+// Reuse the same pinned, revision-checked durable update as ordinary writes.
+#[allow(clippy::too_many_arguments)]
+fn locked_supersede(
+    response_corpus: &Path,
+    guard: &LockGuard,
+    pages: &PinnedPages,
+    digest: &str,
+    request: &SupersedeRequest,
+    today: &str,
+    hooks: &mut impl WriteHooks,
+) -> WriteResult {
+    let name = format!("{}.md", request.target);
+    let replacement_name = format!("{}.md", request.replacement);
+    let read = |name: &str, missing_hint: &str| -> Result<CapturedTarget, WriteResult> {
+        match pages.read_update_target(name) {
+            Ok(Some(page)) => Ok(page),
+            Ok(None) => Err(WriteResult::refusal(
+                format!("pages/{name} does not exist"),
+                missing_hint,
+            )),
+            Err(error) => Err(WriteResult::operational(error, "inspect the page")),
+        }
+    };
+    let current = match read(&name, "verify the target slug and retry") {
+        Ok(page) => page,
+        Err(result) => return result,
+    };
+    let replacement = match read(
+        &replacement_name,
+        "create the replacement before superseding a page",
+    ) {
+        Ok(page) => page,
+        Err(result) => return result,
+    };
+    let replacement_source = match std::str::from_utf8(&replacement.bytes) {
+        Ok(source) => source,
+        Err(error) => {
+            return WriteResult::operational(error.to_string(), "inspect the replacement page");
+        }
+    };
+    match parse_wiki_page(replacement_source) {
+        Ok(page)
+            if page.slug == request.replacement
+                && page.status == crate::Status::Current
+                && page.superseded_by.is_none() => {}
+        _ => {
+            return WriteResult::refusal(
+                "replacement must be a valid current page with the requested slug",
+                "verify the replacement page and retry",
+            );
+        }
+    }
+    let source = match std::str::from_utf8(&current.bytes) {
+        Ok(source) => source,
+        Err(error) => {
+            return WriteResult::operational(error.to_string(), "inspect the historical page");
+        }
+    };
+    let rendered = match render_supersede(request, source, today) {
+        Ok(rendered) => rendered,
+        Err(error) => return WriteResult::refusal(error.to_string(), "correct the page and retry"),
+    };
+    if pages.named_state(&replacement_name).ok().flatten() != Some(replacement.state) {
+        return WriteResult::operational(
+            "replacement changed during supersession",
+            "retry after verifying the replacement",
+        );
+    }
+    let page_path = response_corpus.join(PAGES_NAME).join(&name);
+    match pages.install_update(guard, &name, rendered.page.as_bytes(), current.state, hooks) {
+        Ok(()) => finish_index(
+            response_corpus,
+            guard,
+            digest,
+            &request.target,
+            &page_path,
+            Vec::new(),
+            hooks,
+        ),
+        Err(InstallFailure::Collision) => unreachable!("updates do not link a new target"),
+        Err(error) if error.page_visible() => {
+            page_failure(&request.target, &page_path, error.describe(&request.target))
+        }
+        Err(error) => WriteResult::operational(
+            error.describe(&request.target),
+            "inspect the wiki and retry",
         ),
     }
 }

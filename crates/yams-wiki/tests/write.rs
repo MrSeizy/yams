@@ -624,3 +624,174 @@ fn ordinary_create_permissions_child() {
     assert_eq!(result.exit_code, ExitCode::Ok, "{}", result.body);
     assert_eq!(mode(&fixture.page("umask-probe")), 0o640);
 }
+
+#[test]
+fn supersede_retains_evidence_is_idempotent_and_survives_regular_updates() {
+    let fixture = Fixture::one_page();
+    let replacement = create_value("Replacement");
+    assert_eq!(
+        write_json(
+            &fixture.memory,
+            &serde_json::to_vec(&replacement).unwrap(),
+            "2026-08-07"
+        )
+        .exit_code,
+        ExitCode::Ok
+    );
+    let request = json!({"supersede":true, "target":"alpha", "replacement":"replacement"});
+    let input = serde_json::to_vec(&request).unwrap();
+    let result = write_json(&fixture.memory, &input, "2026-08-08");
+    assert_eq!(result.exit_code, ExitCode::Ok, "{:?}", result.body);
+    let historical = fs::read_to_string(fixture.page("alpha")).unwrap();
+    assert!(historical.ends_with("body.\n\n**Superseded by:** [[replacement]]\n"));
+    let parsed = yams_wiki::parse_wiki_page(&historical).unwrap();
+    assert_eq!(parsed.status, yams_wiki::Status::Historical);
+    assert_eq!(parsed.updated, "2026-08-08");
+    assert_eq!(parsed.owner, yams_wiki::Owner::Shared);
+    assert_eq!(parsed.fields().len(), 8);
+    assert_eq!(
+        write_json(&fixture.memory, &input, "2026-08-08").exit_code,
+        ExitCode::Ok
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.page("alpha")).unwrap(),
+        historical
+    );
+    let update = update_value(None);
+    assert_eq!(
+        write_json(
+            &fixture.memory,
+            &serde_json::to_vec(&update).unwrap(),
+            "2026-08-09"
+        )
+        .exit_code,
+        ExitCode::Ok
+    );
+    let updated = fs::read_to_string(fixture.page("alpha")).unwrap();
+    assert_eq!(
+        yams_wiki::parse_wiki_page(&updated)
+            .unwrap()
+            .superseded_by
+            .as_deref(),
+        Some("replacement")
+    );
+    assert_eq!(updated.matches("**Superseded by:**").count(), 1);
+    assert!(
+        !reindex_wiki(
+            &fixture.memory,
+            &ReindexOptions {
+                check_only: true,
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .changed
+    );
+}
+
+#[test]
+fn supersede_refuses_missing_historical_unsafe_or_changed_targets_without_modifying_pages() {
+    let fixture = Fixture::one_page();
+    let original = fs::read(fixture.page("alpha")).unwrap();
+    let index = fs::read(fixture.memory.join("INDEX.md")).unwrap();
+    for request in [
+        json!({"supersede":true,"target":"alpha","replacement":"missing"}),
+        json!({"supersede":true,"target":"alpha","replacement":"alpha"}),
+        json!({"supersede":true,"target":"alpha","replacement":"../outside"}),
+        json!({"supersede":false,"target":"alpha","replacement":"replacement"}),
+        json!({"supersede":true,"target":"alpha","replacement":"replacement","unexpected":true}),
+    ] {
+        assert_eq!(
+            write_json(
+                &fixture.memory,
+                &serde_json::to_vec(&request).unwrap(),
+                "2026-08-08"
+            )
+            .exit_code,
+            ExitCode::Usage
+        );
+        assert_eq!(fs::read(fixture.page("alpha")).unwrap(), original);
+        assert_eq!(fs::read(fixture.memory.join("INDEX.md")).unwrap(), index);
+    }
+    let create = serde_json::to_vec(&create_value("Replacement")).unwrap();
+    assert_eq!(
+        write_json(&fixture.memory, &create, "2026-08-07").exit_code,
+        ExitCode::Ok
+    );
+    let request = json!({"supersede":true,"target":"alpha","replacement":"replacement","expected_sha256":"0".repeat(64)});
+    assert_eq!(
+        write_json(
+            &fixture.memory,
+            &serde_json::to_vec(&request).unwrap(),
+            "2026-08-08"
+        )
+        .exit_code,
+        ExitCode::Usage
+    );
+    assert_eq!(fs::read(fixture.page("alpha")).unwrap(), original);
+    // A historical replacement cannot make a cycle through the command.
+    let request = json!({"supersede":true,"target":"replacement","replacement":"alpha"});
+    assert_eq!(
+        write_json(
+            &fixture.memory,
+            &serde_json::to_vec(&request).unwrap(),
+            "2026-08-08"
+        )
+        .exit_code,
+        ExitCode::Usage
+    );
+    fs::remove_file(fixture.page("replacement")).unwrap();
+    symlink(fixture.page("alpha"), fixture.page("replacement")).unwrap();
+    let request = json!({"supersede":true,"target":"alpha","replacement":"replacement"});
+    assert_eq!(
+        write_json(
+            &fixture.memory,
+            &serde_json::to_vec(&request).unwrap(),
+            "2026-08-08"
+        )
+        .exit_code,
+        ExitCode::Operational
+    );
+    assert_eq!(fs::read(fixture.page("alpha")).unwrap(), original);
+}
+
+#[test]
+fn supersede_refuses_to_append_a_declaration_inside_an_unclosed_code_fence() {
+    let fixture = Fixture::one_page();
+    fs::write(
+        fixture.page("alpha"),
+        format!("{ALPHA_PAGE}\n```md\nexample\n"),
+    )
+    .unwrap();
+    let create = serde_json::to_vec(&create_value("Replacement")).unwrap();
+    assert_eq!(
+        write_json(&fixture.memory, &create, "2026-08-07").exit_code,
+        ExitCode::Ok
+    );
+    let before = fs::read(fixture.page("alpha")).unwrap();
+    let input =
+        serde_json::to_vec(&json!({"supersede":true,"target":"alpha","replacement":"replacement"}))
+            .unwrap();
+    assert_eq!(
+        write_json(&fixture.memory, &input, "2026-08-08").exit_code,
+        ExitCode::Usage
+    );
+    assert_eq!(fs::read(fixture.page("alpha")).unwrap(), before);
+}
+
+#[test]
+fn supersede_missing_target_names_the_target_and_gives_the_right_hint() {
+    let fixture = Fixture::one_page();
+    let input =
+        serde_json::to_vec(&json!({"supersede":true,"target":"missing","replacement":"alpha"}))
+            .unwrap();
+    let result = write_json(&fixture.memory, &input, "2026-08-08");
+    assert_eq!(result.exit_code, ExitCode::Usage);
+    assert_eq!(result.body["slug"], "missing");
+    assert!(
+        result.body["hint"]
+            .as_str()
+            .unwrap()
+            .contains("target slug")
+    );
+}

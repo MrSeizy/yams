@@ -493,6 +493,7 @@ pub struct ParsedWikiPage {
     pub updated: String,
     pub verified: String,
     pub summary: String,
+    pub superseded_by: Option<String>,
 }
 
 impl ParsedWikiPage {
@@ -505,6 +506,120 @@ impl ParsedWikiPage {
 pub struct RenderedUpdate {
     pub page: String,
     pub content_changed: bool,
+}
+
+/// Mark a page historical while retaining its original body and evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SupersedeRequest {
+    pub supersede: bool,
+    pub target: String,
+    pub replacement: String,
+    pub expected_sha256: Option<String>,
+}
+
+pub(crate) fn validate_supersede_request(request: &SupersedeRequest) -> Result<(), SchemaError> {
+    if !request.supersede {
+        return Err(SchemaError::refusal("supersede must be true"));
+    }
+    validate_page_slug(&request.target)?;
+    validate_page_slug(&request.replacement)?;
+    if request.target == request.replacement {
+        return Err(SchemaError::refusal("a page cannot supersede itself"));
+    }
+    if request
+        .expected_sha256
+        .as_deref()
+        .is_some_and(|value| !is_sha256(value))
+    {
+        return Err(SchemaError::refusal(
+            "expected_sha256 must be a lowercase SHA-256 digest",
+        ));
+    }
+    Ok(())
+}
+
+fn retain_supersession(mut page: String, replacement: Option<&str>) -> Result<String, SchemaError> {
+    let declared = yams_core::superseded_by(&yams_core::parse_frontmatter(&page).body)
+        .map_err(|error| SchemaError::refusal(error.to_string()))?;
+    match (replacement, declared.as_deref()) {
+        (Some(expected), Some(actual)) if expected != actual => {
+            return Err(SchemaError::refusal(
+                "an update cannot change the stored replacement",
+            ));
+        }
+        (Some(replacement), None) => {
+            if !page.ends_with('\n') {
+                page.push('\n');
+            }
+            page.push_str(&format!("\n**Superseded by:** [[{replacement}]]\n"));
+        }
+        (None, Some(_)) => {
+            return Err(SchemaError::refusal(
+                "use supersede to declare a replacement",
+            ));
+        }
+        _ => {}
+    }
+    if replacement.is_some()
+        && yams_core::superseded_by(&yams_core::parse_frontmatter(&page).body)
+            .map_err(|error| SchemaError::refusal(error.to_string()))?
+            .as_deref()
+            != replacement
+    {
+        return Err(SchemaError::refusal(
+            "replacement declaration is hidden by a code fence or HTML comment; close it and retry",
+        ));
+    }
+    Ok(page)
+}
+
+pub fn render_supersede(
+    request: &SupersedeRequest,
+    current: &str,
+    today: &str,
+) -> Result<RenderedUpdate, SchemaError> {
+    validate_today(today)?;
+    validate_supersede_request(request)?;
+    let page = parse_wiki_page(current)?;
+    if page.slug != request.target {
+        return Err(SchemaError::refusal(
+            "target does not match stored page slug",
+        ));
+    }
+    if page.updated.as_str() > today || page.verified.as_str() > today {
+        return Err(SchemaError::refusal("page dates are later than today"));
+    }
+    if let Some(expected) = &request.expected_sha256
+        && &format!("{:x}", Sha256::digest(current.as_bytes())) != expected
+    {
+        return Err(SchemaError::refusal("the page changed since it was read"));
+    }
+    if page
+        .superseded_by
+        .as_deref()
+        .is_some_and(|slug| slug != request.replacement)
+    {
+        return Err(SchemaError::refusal(
+            "page already declares a different replacement",
+        ));
+    }
+    let content_changed = page.superseded_by.is_none();
+    let mut fields = page.fields;
+    fields.insert("status".into(), "historical".into());
+    if content_changed {
+        fields.insert("updated".into(), today.into());
+    }
+    fields.insert("verified".into(), today.into());
+    let rendered = retain_supersession(
+        recanonicalize_frontmatter(current, &fields),
+        Some(&request.replacement),
+    )?;
+    ensure_rendered_page(&rendered)?;
+    Ok(RenderedUpdate {
+        page: rendered,
+        content_changed,
+    })
 }
 
 pub fn slugify(title: &str) -> Result<String, SchemaError> {
@@ -619,25 +734,32 @@ pub fn render_update(
         )));
     }
 
-    let candidate = render_page(
-        CommonRequest::Update(request),
-        &slug,
-        owner,
-        status,
-        updated,
-        today,
-    );
-    let recanonicalized = recanonicalize_frontmatter(current, &stored);
-    let content_changed = without_dates(&candidate) != without_dates(&recanonicalized);
-    let page = if content_changed {
+    let replacement = parse_page_supersession(current, status, &slug)?;
+    let candidate = retain_supersession(
         render_page(
             CommonRequest::Update(request),
             &slug,
             owner,
             status,
+            updated,
             today,
-            today,
-        )
+        ),
+        replacement.as_deref(),
+    )?;
+    let recanonicalized = recanonicalize_frontmatter(current, &stored);
+    let content_changed = without_dates(&candidate) != without_dates(&recanonicalized);
+    let page = if content_changed {
+        retain_supersession(
+            render_page(
+                CommonRequest::Update(request),
+                &slug,
+                owner,
+                status,
+                today,
+                today,
+            ),
+            replacement.as_deref(),
+        )?
     } else {
         candidate
     };
@@ -708,7 +830,9 @@ pub fn parse_wiki_page(source: &str) -> Result<ParsedWikiPage, SchemaError> {
             "page has verified: {verified} before updated: {updated} — editing a page verifies it"
         )));
     }
+    let superseded_by = parse_page_supersession(source, status, &slug)?;
     Ok(ParsedWikiPage {
+        superseded_by,
         fields,
         slug,
         title,
@@ -719,6 +843,23 @@ pub fn parse_wiki_page(source: &str) -> Result<ParsedWikiPage, SchemaError> {
         verified,
         summary,
     })
+}
+
+fn parse_page_supersession(
+    source: &str,
+    status: Status,
+    slug: &str,
+) -> Result<Option<String>, SchemaError> {
+    let superseded_by = yams_core::superseded_by(&yams_core::parse_frontmatter(source).body)
+        .map_err(|error| SchemaError::refusal(error.to_string()))?;
+    if let Some(replacement) = &superseded_by
+        && (status != Status::Historical || replacement == slug)
+    {
+        return Err(SchemaError::refusal(
+            "a replacement requires a historical page and a different slug",
+        ));
+    }
+    Ok(superseded_by)
 }
 
 fn parse_frontmatter_fields(source: &str) -> Result<BTreeMap<String, String>, SchemaError> {

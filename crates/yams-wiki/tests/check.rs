@@ -536,3 +536,61 @@ fn memory_base_dashboard_references_only_canonical_properties() {
         );
     }
 }
+
+#[test]
+fn checker_validates_replacement_chains_and_ignores_fenced_examples() {
+    let old = good("old", "Old evidence", "**Superseded by:** [[new]]")
+        .replace("status: current", "status: historical");
+    let new = good(
+        "new",
+        "New evidence",
+        "```md\n**Superseded by:** [[example]]\n```\nCorrected evidence.",
+    );
+    let fixture = fixture(&[("old.md", old.clone()), ("new.md", new)]);
+    assert!(check_wiki(fixture.path()).unwrap().failures.is_empty());
+    let snapshot = capture_wiki(fixture.path()).unwrap();
+    for (replacement, expected) in [
+        (
+            good("new", "New evidence", "**Superseded by:** [[old]]")
+                .replace("status: current", "status: historical"),
+            "cycle",
+        ),
+        (
+            good("new", "New evidence", "Retired").replace("status: current", "status: historical"),
+            "existing current page",
+        ),
+    ] {
+        let mut changed = snapshot.clone();
+        changed
+            .pages
+            .iter_mut()
+            .find(|page| page.name == "new.md")
+            .unwrap()
+            .outcome = CapturedPageOutcome::Present(replacement.into_bytes());
+        assert!(has(&validate_wiki(&changed).failures, expected));
+    }
+    let mut changed = snapshot.clone();
+    changed
+        .pages
+        .iter_mut()
+        .find(|page| page.name == "old.md")
+        .unwrap()
+        .outcome = CapturedPageOutcome::Present(old.replace("[[new]]", "[[missing]]").into_bytes());
+    assert!(has(
+        &validate_wiki(&changed).failures,
+        "existing current page"
+    ));
+    changed
+        .pages
+        .iter_mut()
+        .find(|page| page.name == "old.md")
+        .unwrap()
+        .outcome = CapturedPageOutcome::Present(
+        old.replace("status: historical", "status: current")
+            .into_bytes(),
+    );
+    assert!(has(
+        &validate_wiki(&changed).failures,
+        "requires historical status"
+    ));
+}

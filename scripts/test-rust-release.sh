@@ -224,6 +224,7 @@ require_output "$COMMAND_STDOUT" '"repository_layout":1' 'yams-wiki capabilities
 require_output "$COMMAND_STDOUT" '"init_manifest":3' 'yams-wiki capabilities'
 require_output "$COMMAND_STDOUT" '"wiki_maintenance":2' 'yams-wiki capabilities'
 require_output "$COMMAND_STDOUT" '"graph_expansion":1' 'yams-wiki capabilities'
+require_output "$COMMAND_STDOUT" '"supersession":1' 'yams-wiki capabilities'
 
 [ -f "$INIT_POLICY" ] || fail "canonical initialization policy is missing: $INIT_POLICY"
 

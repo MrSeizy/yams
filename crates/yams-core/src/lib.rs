@@ -8,6 +8,7 @@ mod scan;
 mod search;
 mod select;
 mod snippet;
+mod supersession;
 
 pub use chunk::{Chunk, ChunkError, MAX_CHUNK, MIN_CHUNK, chunk, chunks_for_page, embed_text_for};
 pub use corpus::{
@@ -42,6 +43,7 @@ pub use snippet::{
     SNIPPET_GAIN, SNIPPET_WIDTH, Snippet, SnippetError, SnippetStatistics, TermFrequency,
     WeightedTerm, query_terms, snippet, term_weights,
 };
+pub use supersession::{SupersessionError, superseded_by, valid_replacement_slug};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]

@@ -38,6 +38,7 @@ pub use lock::{
 };
 pub use schema::{
     CreateRequest, Owner, PageType, ParsedWikiPage, RenderedUpdate, SchemaError, Status,
-    UpdateRequest, parse_wiki_page, render_create, render_update, slugify,
+    SupersedeRequest, UpdateRequest, parse_wiki_page, render_create, render_supersede,
+    render_update, slugify,
 };
 pub use write::{WriteResult, write_json};

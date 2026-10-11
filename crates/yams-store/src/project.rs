@@ -14,8 +14,7 @@ use thiserror::Error;
 use crate::home::StoreHome;
 use crate::schema::{
     MIGRATABLE_SCHEMA_VERSION, SCHEMA_VERSION, create_project_schema, has_persistent_schema,
-    migrate_project_schema_v1_to_v2_with_hook, project_schema_is_current,
-    project_schema_matches_version,
+    migrate_project_schema_with_hook, project_schema_is_current, project_schema_matches_version,
 };
 use crate::secure::{DatabaseState, NoHooks, OpenHooks, SecureStoreDirectory, immutable_uri};
 
@@ -483,14 +482,14 @@ fn open_project_with_hooks(
             })?;
         if metadata_exists {
             let version = validate_project_structure(&transaction, &path, &identity)?;
-            if version == MIGRATABLE_SCHEMA_VERSION {
+            if version < SCHEMA_VERSION {
                 validate_project_database(&transaction, &path, &identity)?;
-                migrate_project_schema_v1_to_v2_with_hook(&transaction, || {
+                migrate_project_schema_with_hook(&transaction, || {
                     hooks.after_project_migration_table_creation(&path);
                     Ok(())
                 })
                 .map_err(|source| StoreError::Database {
-                    operation: "migrate project schema from v1 to v2",
+                    operation: "migrate project schema to v3",
                     path: path.clone(),
                     source,
                 })?;
@@ -627,7 +626,7 @@ fn validate_project_structure(
             path: path.to_path_buf(),
         });
     }
-    if version == SCHEMA_VERSION {
+    if version >= 2 {
         validate_embedding_scheme_stamp(connection, path)?;
     }
     Ok(version)
@@ -685,7 +684,7 @@ fn validate_metadata_stamp(
             supported: SCHEMA_VERSION,
         });
     }
-    if version != i64::from(MIGRATABLE_SCHEMA_VERSION) && version != i64::from(SCHEMA_VERSION) {
+    if !(i64::from(MIGRATABLE_SCHEMA_VERSION)..=i64::from(SCHEMA_VERSION)).contains(&version) {
         return Err(StoreError::UnsupportedSchema {
             found: version,
             supported: SCHEMA_VERSION,
@@ -1013,7 +1012,7 @@ mod tests {
         let initial = open_project(&home, &root).unwrap();
         initial
             .execute_batch(
-                "DROP TABLE embedding_scheme; \
+                "DROP TABLE supersessions; DROP TABLE embedding_scheme; \
                  UPDATE metadata SET schema_version = 1 WHERE singleton = 1;",
             )
             .unwrap();
@@ -1065,7 +1064,7 @@ mod tests {
         let initial = open_project(&home, &root).unwrap();
         initial
             .execute_batch(
-                "DROP TABLE embedding_scheme; \
+                "DROP TABLE supersessions; DROP TABLE embedding_scheme; \
                  UPDATE metadata SET schema_version = 1 WHERE singleton = 1;",
             )
             .unwrap();

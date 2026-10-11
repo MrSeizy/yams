@@ -480,6 +480,8 @@ fn convert_response(response: CoreSearchResponse, explain: bool) -> SearchRespon
             },
             exact: hit.exact(),
             status: hit.status().map(str::to_owned),
+            superseded_by: hit.superseded_by().map(str::to_owned),
+            supersedes: hit.supersedes().to_vec(),
             explanation: explain.then(|| {
                 response
                     .explanation()

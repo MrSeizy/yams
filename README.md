@@ -282,7 +282,22 @@ outside the supported format; `catalog --check` reports whether
 `INDEX.md` is out of date; `write` takes one JSON request on stdin and
 saves the page safely. `capabilities --json` reports the interface
 versions (`search_results`, `repository_layout`, `init_manifest`,
-`wiki_maintenance`, `graph_expansion`) that adapters and the skills check against.
+`wiki_maintenance`, `graph_expansion`, `supersession`) that adapters and the skills check against.
+
+### Replace outdated knowledge
+
+Write and verify the replacement page, then preserve the old evidence with:
+
+```sh
+yams-wiki supersede .agents/memory old-slug --by replacement-slug
+yams --index
+```
+
+Search follows the explicit replacement link when the historical page matches,
+including with `-k 1`. Results show why the replacement appeared and retain its
+own similarity score. Historical pages can still appear after replacements when
+there is room. See [supersession](docs/supersession.md) for the write and retrieval
+contracts.
 
 ## Development
 

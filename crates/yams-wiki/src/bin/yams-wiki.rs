@@ -55,6 +55,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Retain a page as history and point retrieval to its current replacement.
+    Supersede {
+        path: PathBuf,
+        slug: String,
+        #[arg(long)]
+        by: String,
+        #[arg(long)]
+        expected_sha256: Option<String>,
+    },
     /// Check or regenerate the derived catalog in INDEX.md.
     Catalog {
         path: PathBuf,
@@ -147,6 +156,18 @@ fn execute(
         Command::Check { path } => run_check(&path, stdout, stderr),
         Command::Compat { path } => run_compat(&path, stderr),
         Command::Expand { path, slug, json } => run_expand(&path, &slug, json, stdout, stderr),
+        Command::Supersede {
+            path,
+            slug,
+            by,
+            expected_sha256,
+        } => {
+            let input = serde_json::to_vec(&json!({"supersede": true, "target": slug, "replacement": by, "expected_sha256": expected_sha256})).map_err(io::Error::other)?;
+            let result = write_json(&path, &input, &Local::now().date_naive().to_string());
+            serde_json::to_writer(&mut *stdout, &result.body).map_err(io::Error::other)?;
+            stdout.write_all(b"\n")?;
+            Ok(result.exit_code)
+        }
         Command::Catalog { path, check, adopt } => run_catalog(&path, check, adopt, stdout, stderr),
         Command::Write { path } => run_write(&path, stdout),
     }

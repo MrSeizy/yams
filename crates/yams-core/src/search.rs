@@ -17,6 +17,7 @@ pub struct PageMetadata {
     id: PageId,
     name: String,
     labels: PageLabels,
+    superseded_by: Option<String>,
 }
 
 impl fmt::Debug for PageMetadata {
@@ -38,7 +39,18 @@ impl PageMetadata {
             id,
             name: name.into(),
             labels,
+            superseded_by: None,
         }
+    }
+
+    /// The canonical replacement slug declared in the complete page body.
+    pub fn with_superseded_by(mut self, replacement: Option<String>) -> Self {
+        self.superseded_by = replacement;
+        self
+    }
+
+    pub fn superseded_by(&self) -> Option<&str> {
+        self.superseded_by.as_deref()
     }
 
     pub const fn id(&self) -> &PageId {
@@ -185,6 +197,8 @@ pub struct SearchHit {
     status: Option<String>,
     project: Option<String>,
     exact: bool,
+    superseded_by: Option<String>,
+    supersedes: Vec<String>,
 }
 
 impl fmt::Debug for SearchHit {
@@ -245,6 +259,14 @@ impl SearchHit {
 
     pub fn project(&self) -> Option<&str> {
         self.project.as_deref()
+    }
+
+    pub fn superseded_by(&self) -> Option<&str> {
+        self.superseded_by.as_deref()
+    }
+
+    pub fn supersedes(&self) -> &[String] {
+        &self.supersedes
     }
 
     pub const fn exact(&self) -> bool {
@@ -377,8 +399,8 @@ pub fn compose_search(request: SearchRequest<'_>) -> Result<SearchResponse, Sear
         .iter()
         .map(|candidate| LexicalCandidate::new(candidate.id.clone()))
         .collect::<Vec<_>>();
-    let ranked = hybrid_rank(&dense, &lexical, dense.len().saturating_add(CANDIDATES))?;
-    let ranked = ranked
+    let hybrid = hybrid_rank(&dense, &lexical, dense.len().saturating_add(CANDIDATES))?;
+    let ranked = hybrid
         .iter()
         .enumerate()
         .map(|(index, hit)| {
@@ -393,27 +415,7 @@ pub fn compose_search(request: SearchRequest<'_>) -> Result<SearchResponse, Sear
                 .lexical_chunk()
                 .map(|id| selected_chunk(&chunk_by_id, id))
                 .transpose()?;
-            let explanation = HitExplanation::new(
-                Some(hit.dense_rank()),
-                hit.lexical_rank(),
-                hit.fusion().map(|score| score.total()),
-                hit.fusion()
-                    .map(|score| {
-                        score
-                            .contributions()
-                            .iter()
-                            .map(|contribution| {
-                                RankContribution::new(
-                                    contribution.source(),
-                                    contribution.rank(),
-                                    contribution.weight(),
-                                    contribution.score(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            );
+            let explanation = ranking_explanation(hit);
             Ok(RankedHit::new(
                 &page.name,
                 page.id.as_str(),
@@ -473,7 +475,7 @@ pub fn compose_search(request: SearchRequest<'_>) -> Result<SearchResponse, Sear
     };
 
     let weights = term_weights(request.snippet_statistics)?;
-    let hits = outcome
+    let mut hits = outcome
         .hits()
         .iter()
         .map(|hit| {
@@ -490,14 +492,86 @@ pub fn compose_search(request: SearchRequest<'_>) -> Result<SearchResponse, Sear
                 status: hit.labels().status().map(str::to_owned),
                 project: hit.labels().project().map(str::to_owned),
                 exact: hit.exact(),
+                superseded_by: page_by_id
+                    .values()
+                    .find(|page| page.id.as_str() == hit.path())
+                    .and_then(|page| replacement_path(page)),
+                supersedes: Vec::new(),
             })
         })
         .collect::<Result<Vec<_>, SearchError>>()?;
-    let explained_hits = ungated
+    let mut explained_hits: BTreeMap<String, HitExplanation> = ungated
         .hits()
         .iter()
         .map(|hit| (hit.path().to_owned(), hit.explanation().clone()))
         .collect();
+    // Relevance is established by the original match. Following an explicit
+    // replacement is a provenance operation, not a fabricated similarity hit.
+    let original = hits.clone();
+    let mut primary = Vec::<SearchHit>::new();
+    for hit in &original {
+        let page = page_by_id
+            .values()
+            .find(|page| page.id.as_str() == hit.path)
+            .expect("selected page metadata exists");
+        let Some(replacement) = terminal_replacement(page, &page_by_id) else {
+            if !primary.iter().any(|shown| shown.path == hit.path) {
+                primary.push(hit.clone());
+            }
+            continue;
+        };
+        let path = replacement.id.as_str();
+        if let Some(shown) = primary.iter_mut().find(|shown| shown.path == path) {
+            shown.supersedes.push(hit.path.clone());
+            continue;
+        }
+        let Some((rank, candidate)) = dense
+            .iter()
+            .enumerate()
+            .find(|(_, candidate)| candidate.page() == &replacement.id)
+        else {
+            primary.push(hit.clone());
+            continue;
+        };
+        let mut promoted =
+            if let Some(selected) = original.iter().find(|selected| selected.path == path) {
+                selected.clone()
+            } else {
+                let text = &chunk_by_id[candidate.chunk()].text;
+                let window = snippet(text, &weights, SNIPPET_WIDTH, SNIPPET_GAIN)?;
+                SearchHit {
+                    name: replacement.name.clone(),
+                    path: path.to_owned(),
+                    score: candidate.score(),
+                    text: text.clone(),
+                    snippet: window.text,
+                    clipped_start: window.clipped_start,
+                    clipped_end: window.clipped_end,
+                    corpus: replacement.labels.corpus().map(str::to_owned),
+                    status: replacement.labels.status().map(str::to_owned),
+                    project: replacement.labels.project().map(str::to_owned),
+                    exact: false,
+                    superseded_by: None,
+                    supersedes: Vec::new(),
+                }
+            };
+        promoted.supersedes.push(hit.path.clone());
+        explained_hits.entry(path.to_owned()).or_insert_with(|| {
+            hybrid
+                .iter()
+                .find(|candidate| candidate.page() == &replacement.id)
+                .map(ranking_explanation)
+                .unwrap_or_else(|| HitExplanation::new(Some(rank + 1), None, None, Vec::new()))
+        });
+        primary.push(promoted);
+    }
+    for hit in original {
+        if !primary.iter().any(|shown| shown.path == hit.path) {
+            primary.push(hit);
+        }
+    }
+    primary.truncate(request.selection.limit());
+    hits = primary;
     let explanation = SearchExplanation {
         query: request.query.to_owned(),
         applied: outcome.applied(),
@@ -511,6 +585,67 @@ pub fn compose_search(request: SearchRequest<'_>) -> Result<SearchResponse, Sear
         explanation,
         exit_code: outcome.exit_code(),
     })
+}
+
+fn ranking_explanation(hit: &crate::HybridRankedPage) -> HitExplanation {
+    HitExplanation::new(
+        Some(hit.dense_rank()),
+        hit.lexical_rank(),
+        hit.fusion().map(|score| score.total()),
+        hit.fusion()
+            .map(|score| {
+                score
+                    .contributions()
+                    .iter()
+                    .map(|contribution| {
+                        RankContribution::new(
+                            contribution.source(),
+                            contribution.rank(),
+                            contribution.weight(),
+                            contribution.score(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+fn replacement_path(page: &PageMetadata) -> Option<String> {
+    let slug = page.superseded_by.as_deref()?;
+    if page.labels.status() != Some("historical") || !crate::valid_replacement_slug(slug) {
+        return None;
+    }
+    Some(
+        std::path::Path::new(page.id.as_str())
+            .parent()?
+            .join(format!("{slug}.md"))
+            .to_str()?
+            .to_owned(),
+    )
+}
+
+fn terminal_replacement<'a>(
+    page: &'a PageMetadata,
+    pages: &BTreeMap<PageId, &'a PageMetadata>,
+) -> Option<&'a PageMetadata> {
+    let mut current = page;
+    let mut seen = BTreeSet::new();
+    while let Some(path) = replacement_path(current) {
+        if !seen.insert(current.id.as_str()) {
+            return None;
+        }
+        let id = PageId::from_canonical_path(path).ok()?;
+        let next = *pages.get(&id)?;
+        if next.labels.corpus() != page.labels.corpus() {
+            return None;
+        }
+        current = next;
+    }
+    (current.id != page.id
+        && current.labels.status() == Some("current")
+        && current.superseded_by.is_none())
+    .then_some(current)
 }
 
 fn validate_dense(

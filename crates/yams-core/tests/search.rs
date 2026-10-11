@@ -912,3 +912,210 @@ fn debug_output_never_discloses_queries_bodies_snippets_labels_or_paths() {
     assert!(rendered.contains("text_bytes"));
     assert!(rendered.contains("hit_count"));
 }
+
+// All paths, bodies and vectors in these tests are synthetic.
+fn supersession_search(
+    relations: &[(&str, &str, Option<&str>, [f32; 2])],
+    limit: usize,
+    min_score: f64,
+) -> SearchResponse {
+    let pages = relations
+        .iter()
+        .map(|(slug, status, replacement, _)| {
+            PageMetadata::new(
+                page(&format!("/fictional/pages/{slug}.md")),
+                *slug,
+                PageLabels::new(Some("shared"), Some(status), None),
+            )
+            .with_superseded_by(replacement.map(str::to_owned))
+        })
+        .collect::<Vec<_>>();
+    let chunks = pages
+        .iter()
+        .map(|page| {
+            ChunkMetadata::new(
+                ChunkId::new(page.id().clone(), 0),
+                format!("fictional {} evidence", page.name()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let dense = chunks
+        .iter()
+        .zip(relations)
+        .map(|(chunk, (_, _, _, vector))| DenseCandidate::new(chunk.id().clone(), vector))
+        .collect::<Vec<_>>();
+    let statistics = SnippetStatistics {
+        total_chunks: chunks.len() as u64,
+        frequencies: vec![TermFrequency {
+            term: "evidence".into(),
+            matching_chunks: chunks.len() as u64,
+        }],
+    };
+    compose_search(SearchRequest::new(
+        "evidence",
+        &[1.0, 0.0],
+        &pages,
+        &chunks,
+        &dense,
+        &[],
+        &statistics,
+        SelectionConfig::new(limit, min_score, 1.0, GateMode::Apply).unwrap(),
+    ))
+    .unwrap()
+}
+
+#[test]
+fn supersession_promotes_a_lower_scoring_replacement_and_preserves_provenance() {
+    let relation = [
+        ("old", "historical", Some("new"), [1.0, 0.0]),
+        ("new", "current", None, [0.0, 1.0]),
+    ];
+    let response = supersession_search(&relation, 1, 0.72);
+    let hit = &response.hits()[0];
+    assert_eq!(hit.name(), "new");
+    assert_eq!(hit.text(), "fictional new evidence");
+    assert_eq!(hit.score().get(), 0.0);
+    assert!(!hit.exact());
+    assert_eq!(hit.supersedes(), &["/fictional/pages/old.md"]);
+    assert_eq!(
+        response.explanation().hit(hit.path()).unwrap().dense_rank(),
+        Some(2)
+    );
+    // With room and the gate bypassed by low thresholds, the old page remains history.
+    let response = supersession_search(&relation, 2, 0.0);
+    assert_eq!(
+        response
+            .hits()
+            .iter()
+            .map(|hit| hit.name())
+            .collect::<Vec<_>>(),
+        ["new", "old"]
+    );
+    assert_eq!(
+        response.hits()[1].superseded_by(),
+        Some("/fictional/pages/new.md")
+    );
+}
+
+#[test]
+fn replacement_chains_deduplicate_and_broken_chains_keep_the_historical_match() {
+    let chain = [
+        ("old", "historical", Some("middle"), [1.0, 0.0]),
+        ("middle", "historical", Some("new"), [0.9, 0.1]),
+        ("new", "current", None, [0.0, 1.0]),
+    ];
+    let response = supersession_search(&chain, 3, 0.0);
+    assert_eq!(
+        response
+            .hits()
+            .iter()
+            .map(|hit| hit.name())
+            .collect::<Vec<_>>(),
+        ["new", "old", "middle"]
+    );
+    assert_eq!(response.hits()[0].supersedes().len(), 2);
+    for relations in [
+        vec![("old", "historical", Some("missing"), [1.0, 0.0])],
+        vec![
+            ("old", "historical", Some("other"), [1.0, 0.0]),
+            ("other", "historical", Some("old"), [0.0, 1.0]),
+        ],
+        vec![
+            ("old", "historical", Some("other"), [1.0, 0.0]),
+            ("other", "in-progress", None, [0.0, 1.0]),
+        ],
+        vec![
+            ("old", "current", Some("other"), [1.0, 0.0]),
+            ("other", "current", None, [0.0, 1.0]),
+        ],
+    ] {
+        let response = supersession_search(&relations, 1, 0.0);
+        assert_eq!(response.hits()[0].name(), "old");
+        assert!(response.hits()[0].supersedes().is_empty());
+    }
+}
+
+#[test]
+fn supersession_does_not_bypass_the_original_match_gate() {
+    let response = supersession_search(
+        &[
+            ("old", "historical", Some("new"), [0.0, 1.0]),
+            ("new", "current", None, [0.0, 1.0]),
+        ],
+        1,
+        0.72,
+    );
+    assert_eq!(response.exit_code(), ExitCode::Unsure);
+    assert!(response.hits().is_empty());
+}
+
+#[test]
+fn replacement_outside_hybrid_candidate_window_can_be_promoted() {
+    let mut rows = vec![("old".to_owned(), "historical", Some("new"), [1.0, 0.0])];
+    for n in 0..30 {
+        rows.push((format!("unrelated-{n}"), "current", None, [0.9, 0.1]));
+    }
+    rows.push(("new".into(), "current", None, [0.0, 1.0]));
+    let rows = rows
+        .iter()
+        .map(|(slug, status, replacement, vector)| (slug.as_str(), *status, *replacement, *vector))
+        .collect::<Vec<_>>();
+    assert_eq!(supersession_search(&rows, 1, 0.72).hits()[0].name(), "new");
+}
+
+#[test]
+fn promoted_replacement_keeps_available_bm25_and_fusion_explanations() {
+    let old = page("/fictional/pages/old.md");
+    let new = page("/fictional/pages/new.md");
+    let pages = [
+        PageMetadata::new(
+            old.clone(),
+            "old",
+            PageLabels::new(Some("shared"), Some("historical"), None),
+        )
+        .with_superseded_by(Some("new".into())),
+        PageMetadata::new(
+            new.clone(),
+            "new",
+            PageLabels::new(Some("shared"), Some("current"), None),
+        ),
+    ];
+    let old_chunk = ChunkId::new(old, 0);
+    let new_chunk = ChunkId::new(new.clone(), 0);
+    let chunks = [
+        ChunkMetadata::new(old_chunk.clone(), "old evidence"),
+        ChunkMetadata::new(new_chunk.clone(), "new evidence"),
+    ];
+    let dense = [
+        DenseCandidate::new(old_chunk.clone(), &[1.0, 0.0]),
+        DenseCandidate::new(new_chunk.clone(), &[0.0, 1.0]),
+    ];
+    let lexical = [
+        LexicalScore::new(old_chunk, -2.0, 1),
+        LexicalScore::new(new_chunk, -1.0, 2),
+    ];
+    let stats = SnippetStatistics {
+        total_chunks: 2,
+        frequencies: vec![TermFrequency {
+            term: "evidence".into(),
+            matching_chunks: 2,
+        }],
+    };
+    let response = compose_search(SearchRequest::new(
+        "evidence",
+        &[1.0, 0.0],
+        &pages,
+        &chunks,
+        &dense,
+        &lexical,
+        &stats,
+        SelectionConfig::new(1, 0.72, 1.0, GateMode::Apply).unwrap(),
+    ))
+    .unwrap();
+    assert_eq!(response.hits()[0].name(), "new");
+    let explanation = response.explanation().hit(new.as_str()).unwrap();
+    assert_eq!(explanation.dense_rank(), Some(2));
+    assert_eq!(explanation.bm25_rank(), Some(2));
+    assert!(explanation.rrf_score().is_some());
+    assert_eq!(explanation.contributions().len(), 2);
+}
