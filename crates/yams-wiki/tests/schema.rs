@@ -530,6 +530,46 @@ fn update_mode_and_expected_hash_shapes_have_exact_errors() {
 }
 
 #[test]
+fn wording_only_is_an_explicit_update_boolean() {
+    let original = update_request();
+    assert!(!original.wording_only);
+    assert!(
+        serde_json::to_value(&original)
+            .unwrap()
+            .get("wording_only")
+            .is_none()
+    );
+    for enabled in [false, true] {
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["wording_only"] = json!(enabled);
+        let decoded: UpdateRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.wording_only, enabled);
+        let round_trip: UpdateRequest =
+            serde_json::from_value(serde_json::to_value(&decoded).unwrap()).unwrap();
+        assert_eq!(decoded, round_trip);
+    }
+    for bad in [json!(null), json!("true"), json!(1), json!([]), json!({})] {
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["wording_only"] = bad;
+        assert_eq!(
+            serde_json::from_value::<UpdateRequest>(value)
+                .unwrap_err()
+                .to_string(),
+            "wording_only must be a boolean"
+        );
+    }
+    let mut create = serde_json::to_value(create_request()).unwrap();
+    create["wording_only"] = json!(true);
+    assert!(serde_json::from_value::<CreateRequest>(create).is_err());
+    assert!(
+        serde_json::from_value::<yams_wiki::SupersedeRequest>(json!({
+            "supersede": true, "target": "alpha", "replacement": "beta", "wording_only": true
+        }))
+        .is_err()
+    );
+}
+
+#[test]
 fn page_types_have_exact_values_and_fixed_headings() {
     let cases = [
         (PageType::Gotcha, "gotcha", "Gotchas"),
@@ -1178,6 +1218,72 @@ fn unchanged_updates_move_only_verified_while_changes_move_both_dates() {
     assert!(changed.content_changed);
     assert!(changed.page.contains("updated: 2026-08-09"));
     assert!(changed.page.contains("verified: 2026-08-09"));
+}
+
+#[test]
+fn wording_only_preserves_distinct_dates_for_changed_and_unchanged_content() {
+    let current = render_create(&create_request(), "2026-08-01")
+        .unwrap()
+        .replace("verified: 2026-08-01", "verified: 2026-08-07");
+    let mut request = update_request();
+    request.wording_only = true;
+    let unchanged = render_update(&request, &current, "2026-08-09").unwrap();
+    assert!(!unchanged.content_changed);
+    assert_eq!(unchanged.page, current);
+
+    request.fact = "Enable blue mode for the fictional lunar console to accept jobs.".into();
+    request.summary = "blue mode is required for fictional jobs".into();
+    let changed = render_update(&request, &current, "2026-08-09").unwrap();
+    assert!(changed.content_changed);
+    let parsed = parse_wiki_page(&changed.page).unwrap();
+    assert_eq!(parsed.updated, "2026-08-01");
+    assert_eq!(parsed.verified, "2026-08-07");
+    assert!(changed.page.contains(&request.fact));
+    assert_eq!(parsed.summary, request.summary);
+
+    request.wording_only = false;
+    let verified = render_update(&request, &changed.page, "2026-08-10").unwrap();
+    let parsed = parse_wiki_page(&verified.page).unwrap();
+    assert_eq!(parsed.updated, "2026-08-01");
+    assert_eq!(parsed.verified, "2026-08-10");
+}
+
+#[test]
+fn wording_only_keeps_guards_and_supersession_without_repairing_verification_dates() {
+    let current = format!(
+        "{}\n**Superseded by:** [[replacement]]\n",
+        render_create(&create_request(), "2026-08-07")
+            .unwrap()
+            .replace("status: current", "status: historical")
+    );
+    let mut request = update_request();
+    request.wording_only = true;
+    request.expected_sha256 = Some(format!("{:x}", Sha256::digest(current.as_bytes())));
+    request.fact = "The fictional console needs blue mode to accept jobs.".into();
+    let rendered = render_update(&request, &current, "2026-08-09").unwrap();
+    let parsed = parse_wiki_page(&rendered.page).unwrap();
+    assert_eq!(parsed.status, Status::Historical);
+    assert_eq!(parsed.owner, Owner::Codex);
+    assert_eq!(parsed.superseded_by.as_deref(), Some("replacement"));
+    assert_eq!(parsed.verified, "2026-08-07");
+    assert_eq!(
+        render_update(&request, &rendered.page, "2026-08-09")
+            .unwrap_err()
+            .to_string(),
+        "the page changed since it was read"
+    );
+    request.expected_sha256 = None;
+    for date in ["yesterday", "2026-08-01", "2026-08-10"] {
+        let broken = current.replace("verified: 2026-08-07", &format!("verified: {date}"));
+        let error = render_update(&request, &broken, "2026-08-09").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("wording_only requires YYYY-MM-DD")
+        );
+    }
+    request.title = "An unrelated title".into();
+    assert!(render_update(&request, &current, "2026-08-09").is_err());
 }
 
 #[test]

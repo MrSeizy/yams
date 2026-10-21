@@ -124,7 +124,7 @@ fn capabilities_are_one_stable_json_line() {
                 "search_results": 1,
                 "repository_layout": 1,
                 "init_manifest": 4,
-                "wiki_maintenance": 2,
+                "wiki_maintenance": 3,
                 "graph_expansion": 1,
                 "supersession": 1
             }
@@ -133,7 +133,7 @@ fn capabilities_are_one_stable_json_line() {
 
     let version = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap();
     let expected = format!(
-        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":4,\"wiki_maintenance\":2,\"graph_expansion\":1,\"supersession\":1}}}}\n"
+        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":4,\"wiki_maintenance\":3,\"graph_expansion\":1,\"supersession\":1}}}}\n"
     );
     assert_eq!(output.stdout, expected.as_bytes());
 }
@@ -548,6 +548,34 @@ fn write_reads_stdin_uses_the_local_date_and_prints_one_json_object() {
         page.contains(&format!("updated: {before}\n"))
             || page.contains(&format!("updated: {after}\n")),
         "page did not use the current local calendar date: {page}"
+    );
+}
+
+#[test]
+fn write_wording_only_preserves_old_dates_through_the_cli() {
+    let wiki = Wiki::canonical();
+    let request = json!({
+        "title": "Alpha", "type": "gotcha",
+        "fact": "The fictional beacon requires violet mode.",
+        "why": "The original evidence supports the same requirement.",
+        "how_to_apply": "Enable violet mode.", "falsified_by": "A beacon working in another mode.",
+        "summary": "violet mode is required for the fictional beacon", "related": [],
+        "update": true, "target": "alpha", "wording_only": true
+    });
+    let output = cargo_bin_cmd!("yams-wiki")
+        .args(["write", wiki.path.to_str().unwrap()])
+        .write_stdin(serde_json::to_vec(&request).unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stderr, b"");
+    assert_eq!(one_json_line(&output.stdout)["index_regenerated"], true);
+    let stored = fs::read_to_string(wiki.path.join("pages/alpha.md")).unwrap();
+    assert!(stored.contains("updated: 2026-08-08\nverified: 2026-08-08\n"));
+    assert!(stored.contains("The fictional beacon requires violet mode."));
+    assert!(
+        wiki.index()
+            .contains("violet mode is required for the fictional beacon")
     );
 }
 

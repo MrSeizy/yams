@@ -222,7 +222,7 @@ cmp -s "$TEST_ROOT/yams.help" "$TEST_ROOT/memory-search.help" \
 expect_status 0 'yams-wiki capabilities' "$YAMS_WIKI" capabilities --json
 require_output "$COMMAND_STDOUT" '"repository_layout":1' 'yams-wiki capabilities'
 require_output "$COMMAND_STDOUT" '"init_manifest":4' 'yams-wiki capabilities'
-require_output "$COMMAND_STDOUT" '"wiki_maintenance":2' 'yams-wiki capabilities'
+require_output "$COMMAND_STDOUT" '"wiki_maintenance":3' 'yams-wiki capabilities'
 require_output "$COMMAND_STDOUT" '"graph_expansion":1' 'yams-wiki capabilities'
 require_output "$COMMAND_STDOUT" '"supersession":1' 'yams-wiki capabilities'
 

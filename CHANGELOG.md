@@ -9,6 +9,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `wording_only: true` on JSON update requests preserves the stored `updated`
+  and `verified` dates for edits that leave claims and evidence unchanged.
+  Both `yams-wiki write` and `yams --write` retain their revision checks and
+  transactional catalog updates. Ordinary updates still refresh verification.
+- `wiki_maintenance: 3` advertises wording-only updates. The eight-field page
+  format is unchanged, and both released v1 schema documents remain recognizable
+  for an explicit upgrade through the initialization manifest workflow.
+
 ## [0.2.1] — 2026-10-10
 
 Restore searches of existing indexes after upgrading

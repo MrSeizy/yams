@@ -284,6 +284,16 @@ saves the page safely. `capabilities --json` reports the interface
 versions (`search_results`, `repository_layout`, `init_manifest`,
 `wiki_maintenance`, `graph_expansion`, `supersession`) that adapters and the skills check against.
 
+For spelling, phrasing, or mechanical reference renames that preserve a page's
+claims and evidence, add `"wording_only": true` to the complete JSON update
+request (`"update": true`, `"target": "existing-slug"`, and all body fields).
+Both `yams-wiki write` and `yams --write` then preserve `updated` and `verified`,
+while saving the text and regenerating the catalog normally. This is a caller
+assertion that the meaning is unchanged. Ordinary updates still record a fresh
+verification. The flag requires `contracts.wiki_maintenance >= 3`; see the
+[authoring schema](crates/yams-wiki/assets/repository-memory-v1/SCHEMA.md#writing-pages)
+for the request fields and date rules.
+
 ### When to consult memory
 
 The installed Project memory policy names the decisions that benefit from an

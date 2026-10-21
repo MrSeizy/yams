@@ -283,6 +283,9 @@ pub struct UpdateRequest {
     pub related: Vec<String>,
     pub update: bool,
     pub target: String,
+    /// Assert that only wording changed, preserving both substantive-change and verification dates.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wording_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
 }
@@ -310,6 +313,7 @@ impl UpdateRequest {
             "related",
             "update",
             "target",
+            "wording_only",
             "expected_sha256",
         ];
         let object = json_object(&value)?;
@@ -344,6 +348,11 @@ impl UpdateRequest {
             return Err(SchemaError::refusal("update must be true"));
         }
         let target = json_required_string(object, "target")?;
+        let wording_only = match object.get("wording_only") {
+            None => false,
+            Some(Value::Bool(value)) => *value,
+            Some(_) => return Err(SchemaError::refusal("wording_only must be a boolean")),
+        };
         let expected_sha256 = match object.get("expected_sha256") {
             None | Some(Value::Null) => None,
             Some(Value::String(value)) if is_sha256(value) => Some(value.clone()),
@@ -370,6 +379,7 @@ impl UpdateRequest {
             related,
             update: true,
             target,
+            wording_only,
             expected_sha256,
         })
     }
@@ -733,6 +743,18 @@ pub fn render_update(
             display_missing(updated)
         )));
     }
+    let verified = if request.wording_only {
+        let verified = &stored["verified"];
+        if !is_iso_date(verified) || verified < updated || verified.as_str() > today {
+            return Err(SchemaError::refusal(format!(
+                "pages/{slug}.md has verified: {} — wording_only requires YYYY-MM-DD between updated ({updated}) and today ({today})",
+                display_missing(verified)
+            )));
+        }
+        verified.as_str()
+    } else {
+        today
+    };
 
     let replacement = parse_page_supersession(current, status, &slug)?;
     let candidate = retain_supersession(
@@ -742,13 +764,13 @@ pub fn render_update(
             owner,
             status,
             updated,
-            today,
+            verified,
         ),
         replacement.as_deref(),
     )?;
     let recanonicalized = recanonicalize_frontmatter(current, &stored);
     let content_changed = without_dates(&candidate) != without_dates(&recanonicalized);
-    let page = if content_changed {
+    let page = if content_changed && !request.wording_only {
         retain_supersession(
             render_page(
                 CommonRequest::Update(request),

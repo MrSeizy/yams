@@ -118,7 +118,7 @@ mod tests {
             (
                 "SCHEMA.md",
                 SCHEMA,
-                "f5589442f4ce68e4cfd7a9f105d9cbcef9c2f038592c5aeeace8dd7ee4d2a5c4",
+                "5f11e190dda43528bdd4825ddf5c6a8c718afb7b585f0629ab05ebb7f98f8d63",
             ),
             (
                 "page-template.md",

@@ -725,45 +725,52 @@ fn matching_full_rerun_accepts_read_only_owned_files_and_directories() {
 }
 
 #[test]
-fn original_v1_schema_is_recognized_and_upgrade_is_explicitly_planned() {
-    let repository = Repository::new("original schema upgrade");
-    initialize(&repository, InitMode::Full, AGENT_POLICY);
-    const ORIGINAL: &str = include_str!("fixtures/schema-v1-original.md");
-    assert_eq!(
-        sha256(ORIGINAL.as_bytes()),
-        "7390450d1cffac8b9d1dd9202de49d3e6d1682c46dbe49b929466c084bff2d1b"
-    );
-    let schema = repository.root.join(".agents/memory/SCHEMA.md");
-    fs::write(&schema, ORIGINAL).unwrap();
-    repository.commit_all();
-    let inspection = inspect_repository(&repository.root).unwrap();
-    assert_eq!(inspection.layout, LayoutClass::Full, "{inspection:?}");
-    assert!(inspection.conflicts.is_empty());
-    assert_eq!(fs::read_to_string(&schema).unwrap(), ORIGINAL);
-    let mut upgrade = request(&inspection, InitMode::Full, AGENT_POLICY);
-    upgrade.date = "2026-10-10".to_owned();
-    upgrade.project_page = None;
-    let envelope = plan_repository(&upgrade).unwrap();
-    assert_eq!(envelope.manifest.operations.len(), 1, "{envelope:?}");
-    assert_eq!(
-        envelope.manifest.operations[0].path,
-        ".agents/memory/SCHEMA.md"
-    );
-    assert_eq!(fs::read_to_string(&schema).unwrap(), ORIGINAL);
-    let result = apply_manifest(&envelope);
-    assert!(result.ok, "{result:?}");
-    assert!(result.validated, "{result:?}");
-    assert_eq!(fs::read_to_string(&schema).unwrap(), SCHEMA);
-    // A similar user-authored schema is still protected from replacement.
-    fs::write(&schema, format!("{ORIGINAL}Custom guidance.\n")).unwrap();
-    repository.commit_all();
-    let inspection = inspect_repository(&repository.root).unwrap();
-    assert!(
-        inspection
-            .conflicts
-            .iter()
-            .any(|conflict| conflict.code == "schema-mismatch")
-    );
+fn released_v1_schemas_are_recognized_and_upgrades_are_explicitly_planned() {
+    for (released, digest) in [
+        (
+            include_str!("fixtures/schema-v1-original.md"),
+            "7390450d1cffac8b9d1dd9202de49d3e6d1682c46dbe49b929466c084bff2d1b",
+        ),
+        (
+            include_str!("fixtures/schema-v1-supersession.md"),
+            "f5589442f4ce68e4cfd7a9f105d9cbcef9c2f038592c5aeeace8dd7ee4d2a5c4",
+        ),
+    ] {
+        let repository = Repository::new("released schema upgrade");
+        initialize(&repository, InitMode::Full, AGENT_POLICY);
+        assert_eq!(sha256(released.as_bytes()), digest);
+        let schema = repository.root.join(".agents/memory/SCHEMA.md");
+        fs::write(&schema, released).unwrap();
+        repository.commit_all();
+        let inspection = inspect_repository(&repository.root).unwrap();
+        assert_eq!(inspection.layout, LayoutClass::Full, "{inspection:?}");
+        assert!(inspection.conflicts.is_empty());
+        assert_eq!(fs::read_to_string(&schema).unwrap(), released);
+        let mut upgrade = request(&inspection, InitMode::Full, AGENT_POLICY);
+        upgrade.date = "2026-10-21".to_owned();
+        upgrade.project_page = None;
+        let envelope = plan_repository(&upgrade).unwrap();
+        assert_eq!(envelope.manifest.operations.len(), 1, "{envelope:?}");
+        assert_eq!(
+            envelope.manifest.operations[0].path,
+            ".agents/memory/SCHEMA.md"
+        );
+        assert_eq!(fs::read_to_string(&schema).unwrap(), released);
+        let result = apply_manifest(&envelope);
+        assert!(result.ok, "{result:?}");
+        assert!(result.validated, "{result:?}");
+        assert_eq!(fs::read_to_string(&schema).unwrap(), SCHEMA);
+        // A similar user-authored schema is still protected from replacement.
+        fs::write(&schema, format!("{released}Custom guidance.\n")).unwrap();
+        repository.commit_all();
+        let inspection = inspect_repository(&repository.root).unwrap();
+        assert!(
+            inspection
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.code == "schema-mismatch")
+        );
+    }
 }
 
 #[test]

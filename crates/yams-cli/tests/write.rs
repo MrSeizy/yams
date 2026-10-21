@@ -93,6 +93,37 @@ fn direct_write_uses_the_shared_wiki_without_opening_runtime_state() {
 }
 
 #[test]
+fn direct_wording_only_update_preserves_dates_and_updates_the_catalog() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path();
+    let corpus = create_wiki(project);
+    let request = serde_json::json!({
+        "title": "Alpha", "type": "gotcha", "fact": "The same body, more clearly worded.",
+        "why": "The existing evidence still supports the fact.",
+        "how_to_apply": "Apply the existing guidance.", "falsified_by": "Contrary evidence.",
+        "summary": "a clearly worded trap", "related": [],
+        "update": true, "target": "alpha", "wording_only": true
+    });
+    let completion = execute_direct(
+        ["yams", "--write"],
+        std::iter::empty::<(OsString, OsString)>(),
+        &runtime(project),
+        &serde_json::to_vec(&request).unwrap(),
+        &when(),
+    );
+    assert_eq!(completion.exit_code, ExitCode::Ok);
+    assert_eq!(json(&completion)["index_regenerated"], true);
+    let stored = fs::read_to_string(corpus.join("pages/alpha.md")).unwrap();
+    assert!(stored.contains("updated: 2026-07-28\nverified: 2026-07-28\n"));
+    assert!(stored.contains("The same body, more clearly worded."));
+    assert!(
+        fs::read_to_string(corpus.join("INDEX.md"))
+            .unwrap()
+            .contains("a clearly worded trap")
+    );
+}
+
+#[test]
 fn every_direct_write_failure_is_one_compact_json_object() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("silver-orchard");

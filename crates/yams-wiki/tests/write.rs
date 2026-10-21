@@ -499,6 +499,65 @@ fn unchanged_index_response_omits_index_and_forward_refs_keep_first_seen_order()
 }
 
 #[test]
+fn wording_only_writes_content_and_catalog_without_claiming_fresh_verification() {
+    let fixture = Fixture::one_page();
+    let mut request = update_value(None);
+    let first = write_json(
+        &fixture.memory,
+        &serde_json::to_vec(&request).unwrap(),
+        "2026-08-01",
+    );
+    assert_eq!(first.exit_code, ExitCode::Ok);
+    let verified = write_json(
+        &fixture.memory,
+        &serde_json::to_vec(&request).unwrap(),
+        "2026-08-03",
+    );
+    assert_eq!(verified.exit_code, ExitCode::Ok);
+    let before = fs::read(fixture.page("alpha")).unwrap();
+    request["expected_sha256"] = json!(format!("{:x}", Sha256::digest(&before)));
+    request["wording_only"] = json!(true);
+    request["fact"] = json!("The revised body, reworded for clarity.");
+    request["summary"] = json!("a real trap explained clearly");
+    let result = write_json(
+        &fixture.memory,
+        &serde_json::to_vec(&request).unwrap(),
+        "2026-08-09",
+    );
+    assert_eq!(result.exit_code, ExitCode::Ok, "{}", result.body);
+    assert_eq!(result.body["index_regenerated"], true);
+    let stored = fs::read_to_string(fixture.page("alpha")).unwrap();
+    assert!(stored.contains("updated: 2026-08-01\nverified: 2026-08-03\n"));
+    assert!(stored.contains("The revised body, reworded for clarity."));
+    let index = fs::read_to_string(fixture.memory.join("INDEX.md")).unwrap();
+    assert!(index.contains("a real trap explained clearly"));
+
+    let stale = write_json(
+        &fixture.memory,
+        &serde_json::to_vec(&request).unwrap(),
+        "2026-08-10",
+    );
+    assert_eq!(stale.exit_code, ExitCode::Usage);
+    assert_eq!(fs::read_to_string(fixture.page("alpha")).unwrap(), stored);
+    assert_eq!(
+        fs::read_to_string(fixture.memory.join("INDEX.md")).unwrap(),
+        index
+    );
+    request.as_object_mut().unwrap().remove("expected_sha256");
+    let repeated = write_json(
+        &fixture.memory,
+        &serde_json::to_vec(&request).unwrap(),
+        "2026-08-10",
+    );
+    assert_eq!(repeated.exit_code, ExitCode::Ok);
+    assert_eq!(fs::read_to_string(fixture.page("alpha")).unwrap(), stored);
+    assert_eq!(
+        fs::read_to_string(fixture.memory.join("INDEX.md")).unwrap(),
+        index
+    );
+}
+
+#[test]
 fn noncanonical_index_refuses_before_page_mutation_with_no_paths() {
     let fixture = Fixture::one_page();
     fs::write(

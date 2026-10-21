@@ -99,6 +99,12 @@ An update keeps the stored owner and status, requires `update: true`, identifies
 
 Run the same write command for an update. `expected_sha256` is optional; when present, replace the example value with the lowercase SHA-256 digest of the exact current page bytes. It provides compare-and-swap protection against updating a page that changed after it was read.
 
+By default an update records a fresh factual verification: it sets `verified` to today and also sets `updated` to today when content changes. An unchanged update advances only `verified`.
+
+For a wording-only edit, add `"wording_only": true` to the same complete update request. This preserves both stored dates, including when the body or summary changes: `updated` tracks substantive changes, and `verified` tracks factual checks. Use it for spelling, phrasing, or mechanical reference renames that leave the claims and evidence unchanged. The flag is the caller's assertion; Yams cannot determine whether an edit preserves meaning. Use a normal update after checking new or changed facts.
+
+`wording_only` is an optional boolean, defaults to false, and is accepted only on updates. Preserved dates must be valid, with `updated <= verified <= today`; this mode refuses invalid verification dates instead of silently repairing or refreshing them. Existing title/slug, ownership, lifecycle, revision, and transactional catalog rules still apply. There is no new frontmatter field or page-format migration. Adapters must require `contracts.wiki_maintenance >= 3` before sending the flag to `yams-wiki write` or `yams --write`.
+
 ## Evidence and lifecycle
 
 Record only knowledge that is verified, durable, and reusable. Verify consequential claims against current code, tests, documentation, or Git history. Never store secrets, transcripts, speculation, or temporary task progress.
