@@ -31,7 +31,13 @@ test-support = ["yams-embed/test-support"]
 
 [dev-dependencies]
 assert_cmd.workspace = true
+serde.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
+
+[[example]]
+name = "retrieval-eval"
+test = true
 
 [[bin]]
 name = "yams"

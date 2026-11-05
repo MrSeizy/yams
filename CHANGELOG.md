@@ -9,6 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- An opt-in `retrieval-eval` development harness using the production model,
+  index, and search path with fictional fixtures, repeatable baseline comparisons,
+  recall and false-positive metrics, warm latency, and context-size estimates.
+
 ## [0.3.0] — 2026-10-24
 
 Preserve verification dates for wording-only memory edits

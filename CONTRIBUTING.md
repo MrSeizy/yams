@@ -37,3 +37,8 @@ contracts.
 Record user-facing changes under the `[Unreleased]` heading in
 `CHANGELOG.md` as part of the change that introduces them. The release
 operator promotes that section to a version entry when cutting a release.
+
+Before changing retrieval behavior, capture and compare results with the
+opt-in [real-model evaluation](docs/retrieval-evaluation.md). Its fixture and
+scoring unit tests need no model; benchmark runs require an explicitly supplied
+local model cache and remain outside the routine CI gate.

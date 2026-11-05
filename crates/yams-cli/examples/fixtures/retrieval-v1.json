@@ -1,0 +1,198 @@
+{
+  "description": "Fictional repository memory. Expected pages and negative queries are authored before running retrieval; do not tune them to match results.",
+  "pages": [
+    {
+      "slug": "night-mode",
+      "title": "Observatory night mode",
+      "summary": "The lantern console requires the beacon feature flag for night mode.",
+      "body": "Night mode in the Observatory is enabled with the beacon feature flag. The lantern console still draws its classic palette without that flag.\n\n**Why:** The new palette renderer has not shipped to every console.\n\n**How to apply:** Enable beacon before testing the dark theme.\n\n**Falsified by:** Every supported console rendering night mode without beacon."
+    },
+    {
+      "slug": "cache-generation",
+      "title": "Cache generation fencing",
+      "summary": "The comet cache rejects stale writers using CACHE_EPOCH_MISMATCH.",
+      "body": "The comet cache increments its generation whenever the index is rebuilt. A writer with an older generation fails with CACHE_EPOCH_MISMATCH rather than overwriting the new index.\n\n**Why:** A slow writer can finish after another process replaces the cache.\n\n**How to apply:** Reopen the cache and retry after CACHE_EPOCH_MISMATCH.\n\n**Falsified by:** Stale writers safely committing without a generation check."
+    },
+    {
+      "slug": "export-atomicity",
+      "title": "Atomic atlas exports",
+      "summary": "Atlas exports use a temporary file and atomic rename.",
+      "body": "An atlas export writes a temporary file, flushes it, then atomically renames it over the destination. Readers see the complete old export or the complete new export.\n\n**Why:** Direct writes allowed readers to observe a partially written map.\n\n**How to apply:** Use publish_atlas_atomically for every map export.\n\n**Falsified by:** A reader observing a partial map through the atomic export path."
+    },
+    {
+      "slug": "export-lock",
+      "title": "Atlas export locking",
+      "summary": "Atlas exporters hold the atlas.lock lease until publication completes.",
+      "body": "Atlas exporters acquire atlas.lock before creating a temporary map and hold the lease until the final rename completes. A second exporter waits for the first publication to finish.\n\n**Why:** Atomic rename alone does not serialize two concurrent map exporters.\n\n**How to apply:** Hold the export lease around publish_atlas_atomically.\n\n**Falsified by:** Concurrent exports preserving publication order without the lease."
+    },
+    {
+      "slug": "old-transport",
+      "title": "Copper courier transport",
+      "summary": "The retired copper courier used polling for parcel delivery.",
+      "status": "historical",
+      "replacement": "courier-streams",
+      "body": "The copper courier used COPPER_POLL_INTERVAL to poll for parcels every thirty seconds. This polling transport is retired.\n\n**Why:** Polling once every thirty seconds made parcel delivery too slow.\n\n**How to apply:** Read the replacement transport decision."
+    },
+    {
+      "slug": "courier-streams",
+      "title": "Courier stream transport",
+      "summary": "Courier deliveries now use persistent streams with resume cursors.",
+      "body": "Courier deliveries use persistent streams with a resume cursor. Reconnecting starts after the last acknowledged parcel; the receiver deduplicates parcel identifiers.\n\n**Why:** Persistent streams reduce delivery delay and resume reliably after a disconnect.\n\n**How to apply:** Persist the acknowledged cursor before requesting the next parcel.\n\n**Falsified by:** Lost parcels or duplicate delivery after reconnecting with the saved cursor."
+    },
+    {
+      "slug": "parser-depth",
+      "title": "Fern parser nesting limit",
+      "summary": "The Fern parser rejects nesting deeper than 64 levels.",
+      "body": "The Fern configuration parser limits nesting to 64 levels and reports FERN_DEPTH_LIMIT when input exceeds that limit.\n\n**Why:** An unbounded recursive parser can exhaust the stack.\n\n**How to apply:** Keep nested Fern maps within 64 levels; do not retry the same invalid input.\n\n**Falsified by:** The supported parser safely accepting deeper nesting."
+    },
+    {
+      "slug": "test-clock",
+      "title": "Fictional test clock",
+      "summary": "Clock-dependent tests inject a frozen time source.",
+      "body": "Tests in the Solstice project inject a frozen clock rather than reading wall time. Test fixtures advance the clock explicitly to exercise expiry boundaries.\n\n**Why:** Tests that sleep until expiry become slow and fail intermittently.\n\n**How to apply:** Pass FixedClock into the expiry evaluator and advance it in the test.\n\n**Falsified by:** Expiry tests being stable while depending directly on wall time."
+    },
+    {
+      "slug": "model-cache",
+      "title": "Offline model cache",
+      "summary": "The Acorn search engine verifies its cached model checksum before loading.",
+      "body": "Acorn search verifies the cached model checksum before loading weights. An absent model produces MODEL_CACHE_MISSING; a mismatched checksum produces MODEL_DIGEST_MISMATCH. Network downloads require an explicit allow-network option.\n\n**Why:** Offline search must not silently download or use modified model bytes.\n\n**How to apply:** Populate the cache explicitly, then run searches without network access.\n\n**Falsified by:** An offline search loading an unverified model or initiating a download."
+    },
+    {
+      "slug": "database-migration",
+      "title": "Pebble database migration",
+      "summary": "Pebble schema upgrades run in one transaction.",
+      "body": "Pebble database migrations update table definitions and the schema version in a single transaction. If any migration statement fails, the database retains the previous schema version and tables.\n\n**Why:** A partially applied migration can make an otherwise valid store unreadable.\n\n**How to apply:** Wrap each complete migration in a transaction and test rollback on injected failure.\n\n**Falsified by:** A failed migration leaving a newer version number or partially upgraded tables."
+    }
+  ],
+  "cases": [
+    {
+      "id": "dark-theme",
+      "slice": "paraphrase",
+      "query": "How do I turn on the Observatory's dark theme?",
+      "expected": [
+        "night-mode"
+      ]
+    },
+    {
+      "id": "slow-cache-writer",
+      "slice": "paraphrase",
+      "query": "Why can an old comet cache writer no longer commit after a rebuild?",
+      "expected": [
+        "cache-generation"
+      ]
+    },
+    {
+      "id": "partial-map",
+      "slice": "paraphrase",
+      "query": "How do atlas readers avoid seeing half a newly exported map?",
+      "expected": [
+        "export-atomicity"
+      ]
+    },
+    {
+      "id": "expiry-tests",
+      "slice": "paraphrase",
+      "query": "How should Solstice tests avoid sleeping until data expires?",
+      "expected": [
+        "test-clock"
+      ]
+    },
+    {
+      "id": "parser-stack",
+      "slice": "paraphrase",
+      "query": "What prevents deeply nested Fern configuration from exhausting the stack?",
+      "expected": [
+        "parser-depth"
+      ]
+    },
+    {
+      "id": "migration-rollback",
+      "slice": "paraphrase",
+      "query": "What happens if a Pebble database upgrade fails halfway through?",
+      "expected": [
+        "database-migration"
+      ]
+    },
+    {
+      "id": "cache-symbol",
+      "slice": "exact",
+      "query": "CACHE_EPOCH_MISMATCH",
+      "expected": [
+        "cache-generation"
+      ]
+    },
+    {
+      "id": "parser-symbol",
+      "slice": "exact",
+      "query": "FERN_DEPTH_LIMIT",
+      "expected": [
+        "parser-depth"
+      ]
+    },
+    {
+      "id": "model-symbol",
+      "slice": "exact",
+      "query": "MODEL_DIGEST_MISMATCH",
+      "expected": [
+        "model-cache"
+      ]
+    },
+    {
+      "id": "clock-symbol",
+      "slice": "exact",
+      "query": "FixedClock",
+      "expected": [
+        "test-clock"
+      ]
+    },
+    {
+      "id": "retired-polling",
+      "slice": "supersession",
+      "query": "COPPER_POLL_INTERVAL",
+      "expected": [
+        "courier-streams"
+      ]
+    },
+    {
+      "id": "old-courier",
+      "slice": "supersession",
+      "query": "How is the copper courier polling transport replaced?",
+      "expected": [
+        "courier-streams"
+      ]
+    },
+    {
+      "id": "export-concurrency",
+      "slice": "multi_page",
+      "query": "How do atlas exports prevent partial files and concurrent publication races?",
+      "expected": [
+        "export-atomicity",
+        "export-lock"
+      ]
+    },
+    {
+      "id": "unrelated-food",
+      "slice": "negative",
+      "query": "How long should sourdough bread rise before baking?",
+      "expected": []
+    },
+    {
+      "id": "unrelated-music",
+      "slice": "negative",
+      "query": "Which instruments make up a string quartet?",
+      "expected": []
+    },
+    {
+      "id": "unknown-symbol",
+      "slice": "negative",
+      "query": "QUASAR_HYPERDRIVE_REPAIR",
+      "expected": []
+    },
+    {
+      "id": "missing-project-fact",
+      "slice": "negative",
+      "query": "What is the Observatory's production deployment password?",
+      "expected": []
+    }
+  ]
+}

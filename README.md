@@ -347,6 +347,10 @@ base=$(git merge-base HEAD origin/main) && git diff --check "$base"..HEAD
 Contribution rules, fixture policy (all test data is fictional), and the
 review workflow live in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The opt-in [retrieval evaluation](docs/retrieval-evaluation.md) runs the real
+model and index against fictional memory, reporting recall, false positives,
+latency, and context size before and after retrieval changes.
+
 ### Release validation
 
 After the source checks pass, a self-contained smoke test builds the

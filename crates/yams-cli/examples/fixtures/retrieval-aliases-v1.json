@@ -1,0 +1,95 @@
+{
+  "description": "Fictional regressions for common protocol and product names whose documented spelling differs from the query.",
+  "pages": [
+    {
+      "slug": "transport",
+      "title": "Cedar transport protocol",
+      "summary": "Cedar serves multiplexed browser requests over HTTP/2.",
+      "body": "The fictional Cedar server accepts HTTP/2 connections over TLS. It multiplexes concurrent requests on one connection and uses binary framing. HTTP/1.1 remains available only for older clients."
+    },
+    {
+      "slug": "authorization",
+      "title": "Cedar authorization flow",
+      "summary": "Cedar uses OAuth 2.0 for delegated access.",
+      "body": "The fictional Cedar application uses OAuth 2.0 authorization code flow with PKCE. Access tokens authorize API requests without exposing the user password to the client. OpenID Connect supplies the login identity layer."
+    },
+    {
+      "slug": "database",
+      "title": "Cedar relational storage",
+      "summary": "Cedar stores relational data in Postgres.",
+      "body": "The fictional Cedar service stores its relational data in Postgres. Transactions protect multi-table updates, and the database uses MVCC to isolate concurrent reads. Schema migrations run before application startup."
+    },
+    {
+      "slug": "network",
+      "title": "Cedar network addresses",
+      "summary": "Cedar supports IP version 6 addresses.",
+      "body": "The fictional Cedar gateway accepts IP version 6 connections. These 128-bit addresses are written as hexadecimal groups separated by colons. IP version 4 clients remain supported through a dual-stack listener."
+    }
+  ],
+  "cases": [
+    {
+      "id": "http-alias",
+      "slice": "alias",
+      "query": "HTTP2",
+      "expected": [
+        "transport"
+      ]
+    },
+    {
+      "id": "http-control",
+      "slice": "alias_control",
+      "query": "HTTP/2",
+      "expected": [
+        "transport"
+      ]
+    },
+    {
+      "id": "oauth-alias",
+      "slice": "alias",
+      "query": "OAuth2",
+      "expected": [
+        "authorization"
+      ]
+    },
+    {
+      "id": "oauth-control",
+      "slice": "alias_control",
+      "query": "OAuth 2.0",
+      "expected": [
+        "authorization"
+      ]
+    },
+    {
+      "id": "pg-alias",
+      "slice": "alias",
+      "query": "PostgreSQL",
+      "expected": [
+        "database"
+      ]
+    },
+    {
+      "id": "pg-control",
+      "slice": "alias_control",
+      "query": "Postgres",
+      "expected": [
+        "database"
+      ]
+    },
+    {
+      "id": "ip-alias",
+      "slice": "alias",
+      "query": "IPv6",
+      "expected": [
+        "network"
+      ]
+    },
+    {
+      "id": "ip-control",
+      "slice": "alias_control",
+      "query": "IP version 6",
+      "expected": [
+        "network"
+      ]
+    }
+  ]
+}
