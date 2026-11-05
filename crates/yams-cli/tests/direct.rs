@@ -150,6 +150,62 @@ fn search_executes_against_existing_index_and_renders_json() {
 }
 
 #[test]
+fn unknown_identifier_abstention_and_bypass_survive_direct_json_rendering() {
+    let temporary = tempfile::tempdir().unwrap();
+    let project = temporary.path().join("project");
+    let corpus_path = project.join(".agents/memory");
+    fs::create_dir_all(&corpus_path).unwrap();
+    fs::write(
+        corpus_path.join("alpha.md"),
+        "---\ntitle: Alpha\nstatus: current\n---\n\nKNOWN_ERROR is documented here.\n",
+    )
+    .unwrap();
+    let state = temporary.path().join("state");
+    let home = StoreHome::new(&state);
+    let corpus = Corpus::validated(&corpus_path, CorpusKind::Shared).unwrap();
+    synchronize(
+        &home,
+        &project,
+        &scan_corpora(&[corpus]),
+        &mut UnitEmbed,
+        SyncMode::Incremental,
+    )
+    .unwrap();
+
+    for bypass in [false, true] {
+        let mut args = vec!["yams", "--json", "--explain", "UNKNOWN_ERROR"];
+        if bypass {
+            args.push("--no-gate");
+        }
+        let result = execute_direct_with_embedder(
+            args,
+            [(OsString::from("YAMS_HOME"), state.clone().into_os_string())],
+            &inputs(&project),
+            &[],
+            &when(),
+            &mut UnitEmbed,
+        );
+        assert_eq!(
+            result.exit_code,
+            if bypass {
+                ExitCode::Ok
+            } else {
+                ExitCode::Unsure
+            }
+        );
+        assert!(result.stderr.is_empty());
+        let body: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+        assert_eq!(body["applied"], !bypass);
+        assert_eq!(body["gate"]["baseline"], 1.0);
+        assert_eq!(
+            body["gate"]["identifier_dropped"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(body["hits"].as_array().unwrap().len(), usize::from(bypass));
+    }
+}
+
+#[test]
 fn direct_and_all_search_read_legacy_v2_indexes_without_migration() {
     let temporary = tempfile::tempdir().unwrap();
     let project = temporary.path().join("project");

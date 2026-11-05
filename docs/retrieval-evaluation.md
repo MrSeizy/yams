@@ -92,9 +92,31 @@ probe, not evidence of general retrieval accuracy or calibrated confidence.
 The expanded baseline exposed an important limit: unsupported questions about
 known topics can score above 0.85, while valid paraphrases can score below 0.75.
 Increasing the global score floor cannot separate these cases without losing
-useful results. Queries for absent code symbols and common alternate spellings both need
-coverage before introducing a literal-presence gate. Case or digits alone do
-not distinguish code symbols from product and protocol names.
+useful results. Case or digits alone do not distinguish code symbols from
+product and protocol names. A broader literal gate rejected HTTP2, OAuth2,
+PostgreSQL, and IPv6 when pages used their common alternate spellings.
+
+The identifier gate therefore applies only to a single ASCII token containing
+an underscore and a letter, without a leading digit. Punctuation wrappers are
+allowed. The token must occur in indexed chunk text or a page title at ASCII
+identifier boundaries, ignoring case. Names without underscores, ordinary
+words, numbers, multi-token queries, and non-ASCII queries retain the existing
+semantic gate. The stricter case-sensitive, unique-page exact rescue is
+unchanged. Presence alone does not bypass the score gates.
+
+On the pinned Jina model, the narrower gate rejected all five absent
+underscored-symbol cases in v2. False positives fell from 17/19 to 12/19;
+positive recall stayed at 27/28 and every positive result list stayed
+identical. All eight alias/control cases were retrieved before and after the
+change. The unanswerable `FixedCalendar` case still returns related pages:
+bare mixed-case names are intentionally left to semantic retrieval. These are
+small synthetic regression measurements, not general accuracy rates.
+
+Rejected single-project identifier queries return exit 3. `--no-gate` still
+shows candidates; `--explain` adds `gate.identifier_dropped` (an empty array
+when this gate does not reject). Empty indexes retain exit 1. Supersession
+follows selection as before, so a documented retired symbol can still lead
+to its replacement.
 
 For prose, retrieval remains a source of leads. An answering agent must verify
 that a retrieved passage actually supplies the requested fact and abstain when

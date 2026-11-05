@@ -863,7 +863,9 @@ fn debug_output_never_discloses_queries_bodies_snippets_labels_or_paths() {
         &dense,
         &lexical_scores,
         &statistics,
-        SelectionConfig::default(),
+        // Keep a hit for redaction coverage even though QUERY_SECRET is an
+        // intentionally absent identifier; still exercise its gate verdict.
+        SelectionConfig::new(5, 0.72, 0.05, GateMode::Bypass).unwrap(),
     ))
     .unwrap();
     let errors = [

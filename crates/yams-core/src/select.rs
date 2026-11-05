@@ -357,16 +357,43 @@ fn single_ascii_identifier_token(query: &str) -> Option<&str> {
 }
 
 fn contains_identifier(text: &str, token: &str) -> bool {
+    contains_identifier_with_case(text, token, false)
+}
+
+fn contains_identifier_with_case(text: &str, token: &str, ignore_case: bool) -> bool {
     let text = text.as_bytes();
     let token = token.as_bytes();
     text.windows(token.len())
         .enumerate()
         .any(|(start, window)| {
-            window == token
+            (window == token || (ignore_case && window.eq_ignore_ascii_case(token)))
                 && (start == 0 || !is_identifier_byte(text[start - 1]))
                 && (start + token.len() == text.len()
                     || !is_identifier_byte(text[start + token.len()]))
         })
+}
+
+/// A lone underscored identifier needs literal evidence, even with a high cosine.
+/// Case and digits alone also describe product/protocol names and their aliases.
+/// Keep this separate from the stricter, case-sensitive unique-page rescue.
+fn identifier_is_missing(query: &str, ranked: &[RankedHit], chunks: &[LiteralChunk<'_>]) -> bool {
+    if !query.is_ascii() {
+        return false;
+    }
+    let Some(token) = single_ascii_identifier_token(query) else {
+        return false;
+    };
+    let bytes = token.as_bytes();
+    let has_letters = bytes.iter().any(u8::is_ascii_alphabetic);
+    if bytes[0].is_ascii_digit() || !has_letters || !token.contains('_') {
+        return false;
+    }
+    !chunks
+        .iter()
+        .any(|chunk| contains_identifier_with_case(chunk.text, token, true))
+        && !ranked
+            .iter()
+            .any(|hit| contains_identifier_with_case(&hit.name, token, true))
 }
 
 const fn is_identifier_byte(byte: u8) -> bool {
@@ -447,6 +474,7 @@ impl GateHit {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GateReason {
     NoHits,
+    IdentifierMissing,
     Floor,
     Gap,
     Passed,
@@ -460,6 +488,7 @@ pub struct GateVerdict {
     max_gap: f64,
     no_hits: bool,
     floor_fired: bool,
+    identifier_dropped: Vec<GateHit>,
     top: Option<f64>,
     floor_dropped: Vec<GateHit>,
     gap_dropped: Vec<GateHit>,
@@ -491,6 +520,10 @@ impl GateVerdict {
         self.floor_fired
     }
 
+    pub fn identifier_dropped(&self) -> &[GateHit] {
+        &self.identifier_dropped
+    }
+
     pub const fn top(&self) -> Option<f64> {
         self.top
     }
@@ -510,6 +543,8 @@ impl GateVerdict {
     pub fn reason(&self) -> GateReason {
         if self.no_hits {
             GateReason::NoHits
+        } else if !self.identifier_dropped.is_empty() {
+            GateReason::IdentifierMissing
         } else if self.floor_fired {
             GateReason::Floor
         } else if !self.gap_dropped.is_empty() || !self.rescued.is_empty() {
@@ -569,6 +604,7 @@ pub fn select(
     }
 
     let exact = exact_identifier_match(query, lexical_leader, literal_chunks);
+    let identifier_missing = identifier_is_missing(query, ranked, literal_chunks);
     let mut ordered = ranked.to_vec();
     ordered.sort_by(|left, right| {
         left.final_rank
@@ -612,7 +648,8 @@ pub fn select(
     let applied = config.gate_mode == GateMode::Apply;
     let (gated, gate) = match baseline {
         Some(baseline) => {
-            let (gated, verdict) = apply_gate(shown.clone(), baseline.get(), config);
+            let (gated, verdict) =
+                apply_gate(shown.clone(), baseline.get(), config, identifier_missing);
             (gated, Some(verdict))
         }
         None => (Vec::new(), None),
@@ -666,6 +703,7 @@ fn apply_gate(
     hits: Vec<SelectedHit>,
     baseline: f64,
     config: SelectionConfig,
+    identifier_missing: bool,
 ) -> (Vec<SelectedHit>, GateVerdict) {
     if hits.is_empty() {
         return (
@@ -676,6 +714,25 @@ fn apply_gate(
                 max_gap: config.max_gap,
                 no_hits: true,
                 floor_fired: false,
+                identifier_dropped: Vec::new(),
+                top: None,
+                floor_dropped: Vec::new(),
+                gap_dropped: Vec::new(),
+                rescued: Vec::new(),
+            },
+        );
+    }
+
+    if identifier_missing {
+        return (
+            Vec::new(),
+            GateVerdict {
+                baseline,
+                min_score: config.min_score,
+                max_gap: config.max_gap,
+                no_hits: false,
+                floor_fired: false,
+                identifier_dropped: hits.iter().map(GateHit::from_hit).collect(),
                 top: None,
                 floor_dropped: Vec::new(),
                 gap_dropped: Vec::new(),
@@ -705,6 +762,7 @@ fn apply_gate(
                 max_gap: config.max_gap,
                 no_hits: false,
                 floor_fired: true,
+                identifier_dropped: Vec::new(),
                 top,
                 floor_dropped,
                 gap_dropped: Vec::new(),
@@ -737,6 +795,7 @@ fn apply_gate(
             max_gap: config.max_gap,
             no_hits: false,
             floor_fired: false,
+            identifier_dropped: Vec::new(),
             top,
             floor_dropped: Vec::new(),
             gap_dropped,

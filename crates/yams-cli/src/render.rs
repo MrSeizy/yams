@@ -54,6 +54,7 @@ pub struct GateVerdict {
     pub max_gap: f64,
     pub no_hits: bool,
     pub floor_fired: bool,
+    pub identifier_dropped: Vec<GateEntry>,
     pub top: Option<f64>,
     pub floor_dropped: Vec<GateEntry>,
     pub gap_dropped: Vec<GateEntry>,
@@ -254,6 +255,7 @@ impl fmt::Debug for GateVerdict {
             .field("max_gap", &self.max_gap)
             .field("no_hits", &self.no_hits)
             .field("floor_fired", &self.floor_fired)
+            .field("identifier_dropped", &self.identifier_dropped)
             .field("top", &self.top)
             .field("floor_dropped", &self.floor_dropped)
             .field("gap_dropped", &self.gap_dropped)
@@ -571,6 +573,9 @@ fn validate_gate(gate: &GateVerdict) -> Result<(), RenderError> {
     for entry in &gate.floor_dropped {
         require_finite("floor_dropped.score", entry.score)?;
     }
+    for entry in &gate.identifier_dropped {
+        require_finite("identifier_dropped.score", entry.score)?;
+    }
     for entry in &gate.gap_dropped {
         require_finite("gap_dropped.score", entry.score)?;
     }
@@ -625,6 +630,12 @@ fn push_explanation_text(
             output,
             "{indent}  no hits reached the gate — nothing to decide on"
         )?;
+    } else if !gate.identifier_dropped.is_empty() {
+        let action = if hypothetical { "would drop" } else { "drops" };
+        writeln!(
+            output,
+            "{indent}  identifier gate {action} everything: the symbol is absent from indexed text and titles"
+        )?;
     } else if gate.floor_fired {
         let action = if hypothetical { "would drop" } else { "drops" };
         writeln!(
@@ -640,7 +651,7 @@ fn push_explanation_text(
         writeln!(output, "{indent}  floor cleared; the gap {action} the rest")?;
     } else {
         let action = if hypothetical { "would pass" } else { "pass" };
-        writeln!(output, "{indent}  both gates {action} everything")?;
+        writeln!(output, "{indent}  all gates {action} everything")?;
     }
 
     let dropped = if hypothetical {
@@ -650,6 +661,9 @@ fn push_explanation_text(
     };
     for entry in &gate.floor_dropped {
         push_gate_entry(output, &indent, "floor", dropped, entry, "")?;
+    }
+    for entry in &gate.identifier_dropped {
+        push_gate_entry(output, &indent, "identifier", dropped, entry, "")?;
     }
     for entry in &gate.gap_dropped {
         push_gate_entry(output, &indent, "gap  ", dropped, entry, "")?;
@@ -856,6 +870,10 @@ fn gate_json(gate: &GateVerdict) -> Result<Value, RenderError> {
     );
     object.insert("no_hits".to_owned(), gate.no_hits.into());
     object.insert("floor_fired".to_owned(), gate.floor_fired.into());
+    object.insert(
+        "identifier_dropped".to_owned(),
+        gate_entries_json("identifier_dropped.score", &gate.identifier_dropped)?,
+    );
     object.insert(
         "top".to_owned(),
         gate.top

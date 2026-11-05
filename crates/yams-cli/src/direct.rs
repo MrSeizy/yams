@@ -522,6 +522,7 @@ fn convert_gate(value: &CoreGateVerdict) -> GateVerdict {
         max_gap: value.max_gap(),
         no_hits: value.no_hits(),
         floor_fired: value.floor_fired(),
+        identifier_dropped: entries(value.identifier_dropped()),
         top: value.top(),
         floor_dropped: entries(value.floor_dropped()),
         gap_dropped: entries(value.gap_dropped()),

@@ -20,6 +20,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Capability contract `memory_health: 1` advertises the health report. Existing
   page, store, and service formats are unchanged.
 
+### Fixed
+
+- Searches for absent underscored identifiers now abstain even when related
+  pages have high similarity. Whole-token presence ignores ASCII case and
+  includes indexed titles. Names without underscores retain semantic matching,
+  including aliases such as HTTP2/HTTP/2 and PostgreSQL/Postgres.
+  `--no-gate` still returns leads, and `--explain` reports rejected candidates
+  in the additive `gate.identifier_dropped` array.
+
 ## [0.3.0] — 2026-10-24
 
 Preserve verification dates for wording-only memory edits

@@ -134,9 +134,12 @@ Yams installs four commands, each with one job:
 | `yams-wiki` | Sets up, checks, and writes repository memory, expands page links, and maintains the catalog |
 
 Search matches on both exact words and meaning. When nothing scores
-well enough, Yams answers "no confident match" instead of returning
-noise. Every result names the page it came from, so an answer is always
-one step from its source.
+well enough, Yams answers "no confident match". A lone underscored identifier
+such as `CACHE_EPOCH_MISMATCH` also needs a whole-token occurrence in indexed
+text or titles, ignoring ASCII case. Names without underscores, such as
+`OAuth2` and `PostgreSQL`, keep semantic matching for alternate spellings.
+Every result names its source page. A high score means the page is related;
+check its contents before treating it as evidence for a particular answer.
 
 ## Working without an agent
 

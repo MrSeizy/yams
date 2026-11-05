@@ -204,6 +204,126 @@ fn exact_identifier_grammar_boundaries_uniqueness_and_lexical_leader_match_pytho
 }
 
 #[test]
+fn absent_underscored_symbols_abstain_even_with_perfect_dense_similarity() {
+    let ranked = [hit("related", 1, 1.0)];
+    let literal = [LiteralChunk::new(
+        "/fictional/shared/related.md",
+        0,
+        "OTHER_MISSING_ID_SUFFIX unrelated text",
+    )];
+    for query in [
+        "MISSING_ID",
+        "missing_method",
+        "error_42",
+        "`MISSING_ID`",
+        "MISSING_ID()",
+    ] {
+        let outcome = select(query, Some(1.0), &ranked, &literal, None, config()).unwrap();
+        assert_eq!(outcome.exit_code(), ExitCode::Unsure, "{query}");
+        assert!(outcome.hits().is_empty(), "{query}");
+        let gate = outcome.gate().unwrap();
+        assert_eq!(gate.reason(), GateReason::IdentifierMissing);
+        assert_eq!(gate.identifier_dropped().len(), 1);
+        assert!(!gate.floor_fired());
+        assert!(gate.floor_dropped().is_empty());
+        assert!(gate.gap_dropped().is_empty());
+        assert_eq!(gate.top(), None);
+
+        let bypass = SelectionConfig::new(5, MIN_SCORE, MAX_GAP, GateMode::Bypass).unwrap();
+        let ungated = select(query, Some(1.0), &ranked, &literal, None, bypass).unwrap();
+        assert_eq!(ungated.exit_code(), ExitCode::Ok);
+        assert_eq!(ungated.hits().len(), 1);
+        assert_eq!(ungated.gate(), outcome.gate());
+        assert!(!ungated.applied());
+    }
+}
+
+#[test]
+fn identifier_presence_is_case_insensitive_and_does_not_require_a_unique_page() {
+    let ranked = [hit("related", 1, 0.9), hit("other", 2, 0.9)];
+    let literal = [
+        LiteralChunk::new(
+            "/fictional/shared/related.md",
+            2,
+            "CACHE_EPOCH_MISMATCH Fixed_Clock",
+        ),
+        LiteralChunk::new("/fictional/shared/other.md", 0, "CACHE_EPOCH_MISMATCH"),
+    ];
+    for query in [
+        "cache_epoch_mismatch",
+        "Cache_Epoch_Mismatch",
+        "CACHE_EPOCH_MISMATCH",
+        "Fixed_Clock",
+    ] {
+        let outcome = select(query, Some(0.9), &ranked, &literal, None, config()).unwrap();
+        assert_eq!(outcome.exit_code(), ExitCode::Ok, "{query}");
+        assert!(outcome.gate().unwrap().identifier_dropped().is_empty());
+        assert!(outcome.hits().iter().all(|hit| !hit.exact()));
+    }
+    let title_only = [hit("The Fixed_Clock adapter", 1, 0.9)];
+    let outcome = select("fixed_clock", Some(0.9), &title_only, &[], None, config()).unwrap();
+    assert_eq!(outcome.exit_code(), ExitCode::Ok);
+}
+
+#[test]
+fn names_without_underscores_keep_semantic_matches_including_spelling_variants() {
+    for (query, text) in [
+        ("HTTP2", "The transport uses HTTP/2."),
+        ("OAuth2", "Delegated access uses OAuth 2.0."),
+        ("PostgreSQL", "Relational data lives in Postgres."),
+        ("IPv6", "The gateway accepts IP version 6 connections."),
+        ("http2", "The transport uses HTTP/2."),
+        ("iOS", "A fictional mobile operating system."),
+        ("FixedCalendar", "A fictional clock adapter."),
+        ("missingMethod", "A related method."),
+        ("error42", "A related error."),
+    ] {
+        for query in [query.to_owned(), format!("`{query}`")] {
+            let ranked = [hit("related", 1, 0.9)];
+            let literal = [LiteralChunk::new("/fictional/shared/related.md", 0, text)];
+            let outcome = select(&query, Some(0.9), &ranked, &literal, None, config()).unwrap();
+            assert_eq!(outcome.exit_code(), ExitCode::Ok, "{query}");
+            assert_eq!(outcome.hits().len(), 1, "{query}");
+            assert!(outcome.gate().unwrap().identifier_dropped().is_empty());
+        }
+    }
+}
+
+#[test]
+fn identifier_gate_does_not_reinterpret_prose_numbers_or_multilingual_queries() {
+    for query in [
+        "cache",
+        "Cache",
+        "CACHE",
+        "2026",
+        "64",
+        "1_MISSING",
+        "___",
+        "!!!",
+        "",
+        "two MISSING_ID",
+        "解释 MISSING_ID",
+        "éMISSING_ID",
+        "missing-id",
+    ] {
+        let outcome = select(
+            query,
+            Some(0.9),
+            &[hit("related", 1, 0.9)],
+            &[],
+            None,
+            config(),
+        )
+        .unwrap();
+        assert_eq!(outcome.exit_code(), ExitCode::Ok, "{query}");
+        assert!(outcome.gate().unwrap().identifier_dropped().is_empty());
+    }
+    let empty = select("MISSING_ID", None, &[], &[], None, config()).unwrap();
+    assert_eq!(empty.exit_code(), ExitCode::Empty);
+    assert!(empty.gate().is_none());
+}
+
+#[test]
 fn page_collapse_is_by_full_path_and_selection_prefers_the_lexical_chunk() {
     let later_duplicate = custom_hit(
         "long",

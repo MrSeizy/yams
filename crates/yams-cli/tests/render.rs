@@ -164,6 +164,7 @@ fn json_escapes_del_and_c1_without_changing_parsed_values() {
                 max_gap: 0.05,
                 no_hits: false,
                 floor_fired: false,
+                identifier_dropped: vec![],
                 top: Some(0.8),
                 floor_dropped: vec![GateEntry {
                     path: "gate\u{001b}\u{0085}".to_owned(),
@@ -221,6 +222,7 @@ fn explain_json_is_an_envelope_with_gate_and_per_hit_rank_signals() {
                 max_gap: 0.05,
                 no_hits: false,
                 floor_fired: true,
+                identifier_dropped: vec![],
                 top: None,
                 floor_dropped: vec![GateEntry {
                     path: "/fictional/.agents/memory/aerostat.md".to_owned(),
@@ -310,6 +312,7 @@ fn explain_text_tenses_a_hypothetical_gate_and_annotates_the_hit() {
                 max_gap: 0.05,
                 no_hits: false,
                 floor_fired: true,
+                identifier_dropped: vec![],
                 top: None,
                 floor_dropped: vec![GateEntry {
                     path: "/fictional/aero\u{1b}[2J\nstat.md".to_owned(),
@@ -451,6 +454,7 @@ fn no_hit_explanations_distinguish_an_unconsulted_gate_from_a_rejection() {
                 max_gap: 0.05,
                 no_hits: false,
                 floor_fired: true,
+                identifier_dropped: vec![],
                 top: None,
                 floor_dropped: vec![GateEntry {
                     path: "/fictional/weak.md".to_owned(),
@@ -483,6 +487,66 @@ fn no_hit_explanations_distinguish_an_unconsulted_gate_from_a_rejection() {
     assert!(unindexed_text.contains("gate: not consulted — this corpus holds no vectors"));
     assert_eq!(unindexed_json["gate"], serde_json::Value::Null);
     assert_eq!(unindexed_json["hits"], serde_json::json!([]));
+}
+
+#[test]
+fn missing_identifier_explanations_describe_applied_and_hypothetical_rejection() {
+    for applied in [false, true] {
+        let mut response = SearchResponse {
+            hits: vec![],
+            explanation: Some(SearchExplanation {
+                query: "MISSING_ID".to_owned(),
+                applied,
+                gate: Some(GateVerdict {
+                    baseline: 0.95,
+                    min_score: 0.72,
+                    max_gap: 0.05,
+                    no_hits: false,
+                    floor_fired: false,
+                    identifier_dropped: vec![GateEntry {
+                        path: "/fictional/related.md".to_owned(),
+                        score: 0.95,
+                    }],
+                    top: None,
+                    floor_dropped: vec![],
+                    gap_dropped: vec![],
+                    rescued: vec![],
+                }),
+            }),
+        };
+        let text = render_text(&response, TextOptions::single(false, Styling::Plain)).unwrap();
+        assert!(text.contains(if applied {
+            "identifier gate drops everything"
+        } else {
+            "identifier gate would drop everything"
+        }));
+        assert!(text.contains("symbol is absent from indexed text and titles"));
+        let json: serde_json::Value =
+            serde_json::from_str(&render_json(&response).unwrap()).unwrap();
+        assert_eq!(json["gate"]["identifier_dropped"][0]["score"], 0.95);
+
+        response
+            .explanation
+            .as_mut()
+            .unwrap()
+            .gate
+            .as_mut()
+            .unwrap()
+            .identifier_dropped[0]
+            .score = f64::NAN;
+        assert_eq!(
+            render_json(&response),
+            Err(RenderError::NonFinite {
+                field: "identifier_dropped.score"
+            })
+        );
+        assert_eq!(
+            render_text(&response, TextOptions::single(false, Styling::Plain)),
+            Err(RenderError::NonFinite {
+                field: "identifier_dropped.score"
+            })
+        );
+    }
 }
 
 #[test]
@@ -525,6 +589,7 @@ fn text_rejects_a_non_finite_gate_value_even_when_that_field_is_json_only() {
                 max_gap: 0.05,
                 no_hits: true,
                 floor_fired: false,
+                identifier_dropped: vec![],
                 top: Some(f64::NAN),
                 floor_dropped: vec![],
                 gap_dropped: vec![],
@@ -588,6 +653,7 @@ fn presentation_debug_redacts_dynamic_values_through_nested_results() {
                 max_gap: 0.05,
                 no_hits: false,
                 floor_fired: false,
+                identifier_dropped: vec![],
                 top: Some(0.8),
                 floor_dropped: vec![GateEntry {
                     path: "/fictional/PRIVATE_FLOOR_SENTINEL.md".to_owned(),
