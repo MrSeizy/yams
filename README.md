@@ -193,9 +193,16 @@ Add `--json -k 5` for machine-readable results (what agents use).
 | `yams --index` | Rebuild this project's search index |
 | `yams --stats` / `yams --projects` | Show index stats and known projects |
 | `yams-wiki check .agents/memory` | Check the memory pages for problems |
+| `yams-wiki health .agents/memory --json` | Report advisory duplicates and overdue verification |
 | `yams-wiki expand .agents/memory SLUG --json` | Follow a page's outgoing links and backlinks |
 | `yams-wiki catalog .agents/memory` | Regenerate the `INDEX.md` catalog |
 | `yams-wiki capabilities --json` | Machine-readable interface versions |
+
+### Advisory checks
+
+`yams-wiki health` reports duplicate current pages and verification dates that
+need attention. Findings are advisory and never rewrite memory or change
+ranking. See [memory health](docs/memory-health.md) for the checks and options.
 
 ### Following related pages
 
@@ -282,7 +289,7 @@ outside the supported format; `catalog --check` reports whether
 `INDEX.md` is out of date; `write` takes one JSON request on stdin and
 saves the page safely. `capabilities --json` reports the interface
 versions (`search_results`, `repository_layout`, `init_manifest`,
-`wiki_maintenance`, `graph_expansion`, `supersession`) that adapters and the skills check against.
+`wiki_maintenance`, `graph_expansion`, `supersession`, `memory_health`) that adapters and the skills check against.
 
 For spelling, phrasing, or mechanical reference renames that preserve a page's
 claims and evidence, add `"wording_only": true` to the complete JSON update

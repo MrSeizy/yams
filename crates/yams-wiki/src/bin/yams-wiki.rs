@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode as ProcessExitCode;
 
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use clap::{Parser, Subcommand};
 use rustix::fs::{self as rfs, FileType, Mode, OFlags};
 use serde::de::DeserializeOwned;
@@ -43,6 +43,19 @@ enum Command {
     },
     /// Validate the structural wiki contract.
     Check { path: PathBuf },
+    /// Report advisory duplicates and overdue verification without changing pages.
+    Health {
+        /// Wiki root containing pages/ and INDEX.md.
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+        /// Flag current pages last verified at least this many days ago.
+        #[arg(long, default_value_t = yams_wiki::DEFAULT_STALE_DAYS, value_parser = clap::value_parser!(u32).range(1..=36500))]
+        stale_days: u32,
+        /// Reference calendar date (YYYY-MM-DD); defaults to the local date.
+        #[arg(long, value_parser = parse_calendar_date)]
+        as_of: Option<NaiveDate>,
+    },
     /// Report constructs outside the supported Obsidian-compatible profile.
     Compat { path: PathBuf },
     /// Follow a page's outgoing links and backlinks without a search index or model.
@@ -154,6 +167,21 @@ fn execute(
         Command::Capabilities { json: false } => Ok(ExitCode::Usage),
         Command::Init { command } => run_init(command, stdout, stderr),
         Command::Check { path } => run_check(&path, stdout, stderr),
+        Command::Health {
+            path,
+            json,
+            stale_days,
+            as_of,
+        } => run_health(
+            &path,
+            json,
+            yams_wiki::HealthOptions {
+                as_of: as_of.unwrap_or_else(|| Local::now().date_naive()),
+                stale_days,
+            },
+            stdout,
+            stderr,
+        ),
         Command::Compat { path } => run_compat(&path, stderr),
         Command::Expand { path, slug, json } => run_expand(&path, &slug, json, stdout, stderr),
         Command::Supersede {
@@ -504,6 +532,65 @@ fn run_check(
     } else {
         Ok(ExitCode::Empty)
     }
+}
+
+fn parse_calendar_date(value: &str) -> Result<NaiveDate, String> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "expected a calendar date in YYYY-MM-DD form".to_owned())?;
+    if date.to_string() != value {
+        return Err("expected a calendar date in YYYY-MM-DD form".into());
+    }
+    Ok(date)
+}
+
+fn run_health(
+    path: &Path,
+    json: bool,
+    options: yams_wiki::HealthOptions,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let report = match yams_wiki::health_wiki(path, &options) {
+        Ok(report) => report,
+        Err(error) => {
+            let (code, exit) = match &error {
+                yams_wiki::HealthError::InvalidThreshold => ("invalid_threshold", ExitCode::Usage),
+                yams_wiki::HealthError::Capture(_) => ("capture_failed", ExitCode::Operational),
+                yams_wiki::HealthError::InvalidPage(_) => ("invalid_page", ExitCode::Operational),
+            };
+            if json {
+                write_json_line(
+                    stdout,
+                    &json!({"ok": false, "code": code, "message": error.to_string()}),
+                )?;
+            } else {
+                write_diagnostic(stderr, error)?;
+            }
+            return Ok(exit);
+        }
+    };
+    if json {
+        write_json_line(stdout, &json!({"ok": true, "health": report}))?;
+    } else {
+        writeln!(
+            stdout,
+            "{} advisory finding(s) across {} current page(s), as of {}",
+            report.findings.len(),
+            report.current_pages,
+            report.as_of
+        )?;
+        for finding in &report.findings {
+            write_diagnostic(
+                stdout,
+                format!("{}: {}", finding.paths.join(", "), finding.message),
+            )?;
+        }
+        if let Some(note) = &report.isolation_note {
+            write_diagnostic(stderr, format!("health read without isolation: {note}"))?;
+        }
+    }
+    // Findings ask for verification; they are neither structural failures nor mutations.
+    Ok(ExitCode::Ok)
 }
 
 fn run_compat(path: &std::path::Path, stderr: &mut impl Write) -> io::Result<ExitCode> {

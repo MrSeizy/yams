@@ -4,9 +4,11 @@ mod capabilities;
 mod check;
 mod durable;
 mod graph;
+mod health;
 mod index;
 mod init;
 mod lock;
+mod read;
 mod schema;
 mod write;
 
@@ -20,6 +22,10 @@ pub use durable::{
     reindex_wiki,
 };
 pub use graph::{GraphError, GraphExpansion, GraphPage, expand_snapshot, expand_wiki};
+pub use health::{
+    DEFAULT_STALE_DAYS, HealthError, HealthFinding, HealthKind, HealthOptions, HealthReport,
+    health_snapshot, health_wiki,
+};
 pub use index::{
     BEGIN_MARKER, END_MARKER, IndexCheck, IndexError, IndexPage, adopt_legacy, check_index,
     parse_index_page, rebuild_index,
@@ -36,6 +42,7 @@ pub use lock::{
     LOCK_NAME, LOCK_TIMEOUT, LockError, LockGuard, LockLease, LockMode, Unisolated,
     UnisolatedReason, acquire_lock, acquire_lock_with_timeout,
 };
+pub use read::PageReadError;
 pub use schema::{
     CreateRequest, Owner, PageType, ParsedWikiPage, RenderedUpdate, SchemaError, Status,
     SupersedeRequest, UpdateRequest, parse_wiki_page, render_create, render_supersede,

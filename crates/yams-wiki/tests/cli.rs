@@ -74,6 +74,68 @@ fn one_json_line(output: &[u8]) -> Value {
     serde_json::from_slice(&output[..output.len() - 1]).unwrap()
 }
 
+#[test]
+fn health_cli_reports_advisories_without_failing_or_mutating_pages() {
+    let wiki = Wiki::canonical();
+    let before = wiki.index();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .arg("health")
+        .arg(&wiki.path)
+        .args(["--json", "--as-of", "2027-08-08", "--stale-days", "180"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let report = one_json_line(&output.stdout);
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["health"]["findings"][0]["kind"], "verification_due");
+    assert_eq!(
+        report["health"]["findings"][0]["paths"][0],
+        "pages/alpha.md"
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(wiki.index(), before);
+    assert_eq!(
+        fs::read_to_string(wiki.path.join("pages/alpha.md")).unwrap(),
+        PAGE
+    );
+    cargo_bin_cmd!("yams-wiki")
+        .arg("check")
+        .arg(&wiki.path)
+        .assert()
+        .success();
+    for args in [
+        ["--as-of", "2026-02-30"],
+        ["--as-of", "2026-1-01"],
+        ["--stale-days", "0"],
+    ] {
+        cargo_bin_cmd!("yams-wiki")
+            .arg("health")
+            .arg(&wiki.path)
+            .args(args)
+            .assert()
+            .code(2);
+    }
+}
+
+#[test]
+fn health_cli_refuses_malformed_pages_with_a_classified_json_error() {
+    let wiki = Wiki::canonical();
+    fs::write(wiki.path.join("pages/broken.md"), "not a page").unwrap();
+    let output = cargo_bin_cmd!("yams-wiki")
+        .arg("health")
+        .arg(&wiki.path)
+        .arg("--json")
+        .assert()
+        .code(4)
+        .get_output()
+        .stdout
+        .clone();
+    let report = one_json_line(&output);
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["code"], "invalid_page");
+}
+
 fn create_request() -> Value {
     json!({
         "title": "Violet mode wakes the beacon",
@@ -126,14 +188,15 @@ fn capabilities_are_one_stable_json_line() {
                 "init_manifest": 4,
                 "wiki_maintenance": 3,
                 "graph_expansion": 1,
-                "supersession": 1
+                "supersession": 1,
+                "memory_health": 1
             }
         })
     );
 
     let version = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap();
     let expected = format!(
-        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":4,\"wiki_maintenance\":3,\"graph_expansion\":1,\"supersession\":1}}}}\n"
+        "{{\"ok\":true,\"yams_version\":{version},\"contracts\":{{\"search_results\":1,\"repository_layout\":1,\"init_manifest\":4,\"wiki_maintenance\":3,\"graph_expansion\":1,\"supersession\":1,\"memory_health\":1}}}}\n"
     );
     assert_eq!(output.stdout, expected.as_bytes());
 }

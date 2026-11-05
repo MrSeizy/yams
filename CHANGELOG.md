@@ -14,6 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An opt-in `retrieval-eval` development harness using the production model,
   index, and search path with fictional fixtures, repeatable baseline comparisons,
   recall and false-positive metrics, warm latency, and context-size estimates.
+- `yams-wiki health` reports advisory duplicate titles/bodies and verification
+  dates needing review, with `--json`, `--stale-days`, and reproducible `--as-of`.
+  Findings never mutate pages, affect search ranking, or fail structural checks.
+- Capability contract `memory_health: 1` advertises the health report. Existing
+  page, store, and service formats are unchanged.
 
 ## [0.3.0] — 2026-10-24
 

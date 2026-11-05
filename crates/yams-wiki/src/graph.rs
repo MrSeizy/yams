@@ -7,8 +7,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::check::{capture_existing_wiki, wikilink_targets};
+use crate::read::read_pages;
 use crate::schema::validate_slug;
-use crate::{CapturedPageOutcome, CheckError, Status, WikiSnapshot, parse_wiki_page};
+use crate::{CheckError, Status, WikiSnapshot};
 
 /// Compact, source-attributed page metadata; bodies are never injected by expansion.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -63,45 +64,18 @@ pub fn expand_snapshot(snapshot: &WikiSnapshot, slug: &str) -> Result<GraphExpan
     validate_slug(slug).map_err(|_| GraphError::InvalidSlug)?;
     let mut pages = BTreeMap::new();
     let mut edges = BTreeMap::new();
-    for captured in &snapshot.pages {
-        let invalid = |reason: String| GraphError::InvalidPage {
-            name: captured.name.to_string_lossy().into_owned(),
-            reason,
-        };
-        let name = captured
-            .name
-            .to_str()
-            .ok_or_else(|| invalid("filename is not valid UTF-8".to_owned()))?;
-        let bytes = match &captured.outcome {
-            CapturedPageOutcome::Present(bytes) => bytes,
-            CapturedPageOutcome::NotRegular => {
-                return Err(invalid("not a regular file".to_owned()));
-            }
-            CapturedPageOutcome::Unreadable(_) => {
-                return Err(invalid("page is not readable".to_owned()));
-            }
-            CapturedPageOutcome::Symlink => {
-                return Err(invalid("symlink refused".to_owned()));
-            }
-            CapturedPageOutcome::OutsideCorpus => {
-                return Err(invalid("page resolves outside the wiki".to_owned()));
-            }
-        };
-        let source = std::str::from_utf8(bytes)
-            .map_err(|_| invalid("page is not valid UTF-8".to_owned()))?;
-        let parsed = parse_wiki_page(source).map_err(|error| invalid(error.to_string()))?;
-        if name != format!("{}.md", parsed.slug) {
-            return Err(invalid(format!(
-                "filename does not match slug {:?}",
-                parsed.slug
-            )));
-        }
-        let targets = wikilink_targets(source)
+    let captured = read_pages(snapshot).map_err(|error| GraphError::InvalidPage {
+        name: error.name,
+        reason: error.reason,
+    })?;
+    for (slug, captured) in captured {
+        let parsed = captured.metadata;
+        let targets = wikilink_targets(captured.source)
             .into_iter()
             .filter(|target| target != &parsed.slug)
             .collect::<BTreeSet<_>>();
         let page = GraphPage {
-            path: format!("pages/{name}"),
+            path: format!("pages/{slug}.md"),
             slug: parsed.slug,
             title: parsed.title,
             summary: parsed.summary,
@@ -109,9 +83,7 @@ pub fn expand_snapshot(snapshot: &WikiSnapshot, slug: &str) -> Result<GraphExpan
             verified: parsed.verified,
         };
         edges.insert(page.slug.clone(), targets);
-        if pages.insert(page.slug.clone(), page).is_some() {
-            return Err(invalid("duplicate page slug".to_owned()));
-        }
+        pages.insert(page.slug.clone(), page);
     }
 
     let page = pages.get(slug).ok_or_else(|| GraphError::NotFound {

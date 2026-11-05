@@ -17,6 +17,8 @@ pub struct CapabilityContracts {
     pub graph_expansion: u32,
     /// Explicit historical replacements in writes and retrieval.
     pub supersession: u32,
+    /// Read-only `yams-wiki health` advisory report.
+    pub memory_health: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -37,6 +39,7 @@ pub const fn capabilities() -> Capabilities {
             wiki_maintenance: 3,
             graph_expansion: 1,
             supersession: 1,
+            memory_health: 1,
         },
     }
 }
@@ -59,6 +62,7 @@ mod tests {
                     wiki_maintenance: 3,
                     graph_expansion: 1,
                     supersession: 1,
+                    memory_health: 1,
                 },
             }
         );
